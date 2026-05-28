@@ -228,13 +228,20 @@ cron.schedule('0 9 * * *', async () => {
   );
 
   for (const post of postsToNotify) {
-    await channel.send(
+    let msg =
       `📅 **3日後の投稿予定** <@${MANAGER_ID}>\n\n` +
       `**日付：** ${post.date}\n` +
-      `**テーマ：** ${post.theme}\n\n` +
+      `**テーマ：** ${post.theme}\n\n`;
+
+    if (post.note) {
+      msg += `💬 **事前ヒアリング：** ${post.note}\n\n`;
+    }
+
+    msg +=
       `「GO」と書けばそのまま進めます。\n` +
-      `変更・追加情報があればそのまま書いてください。どちらも3パターンの文案を返します。`
-    );
+      `変更・追加情報があればそのまま書いてください。どちらも3パターンの文案を返します。`;
+
+    await channel.send(msg);
     post.status = 'notified';
     currentPendingPostId = post.id;
   }
