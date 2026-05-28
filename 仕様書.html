@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: 'Noto Sans JP', Arial, sans-serif; font-size: 11pt; color: #000; margin: 40px; line-height: 1.8; }
+  h1 { font-size: 20pt; font-weight: bold; border-bottom: 2px solid #000; padding-bottom: 8px; margin-top: 40px; }
+  h2 { font-size: 14pt; font-weight: bold; margin-top: 32px; border-left: 4px solid #333; padding-left: 10px; }
+  h3 { font-size: 12pt; font-weight: bold; margin-top: 24px; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+  th { background-color: #333; color: #fff; padding: 8px 12px; text-align: left; font-size: 10pt; }
+  td { border: 1px solid #ccc; padding: 8px 12px; font-size: 10pt; vertical-align: top; }
+  tr:nth-child(even) td { background-color: #f5f5f5; }
+  pre { background-color: #f0f0f0; border: 1px solid #ccc; padding: 16px; font-family: monospace; font-size: 10pt; white-space: pre-wrap; line-height: 1.6; border-radius: 4px; }
+  .flow { background-color: #f9f9f9; border: 1px solid #ddd; padding: 20px; border-radius: 4px; font-size: 10pt; line-height: 2; }
+  .highlight { background-color: #fff3cd; padding: 12px 16px; border-left: 4px solid #f0a500; margin: 16px 0; }
+  .caution { background-color: #fdecea; padding: 12px 16px; border-left: 4px solid #d32f2f; margin: 16px 0; }
+  p { margin: 8px 0; }
+  ul { margin: 8px 0; padding-left: 24px; }
+  li { margin: 4px 0; }
+</style>
+</head>
+<body>
+
+<h1>NORTHEPTION SNS半自動投稿システム 仕様書</h1>
+<p style="color:#666; font-size:9pt;">作成日：2026年5月22日　最終更新：2026年5月22日（v2）</p>
+
+<hr>
+
+<h2>このシステムで何が変わるか</h2>
+
+<table>
+<tr><th>Before（今まで）</th><th>After（このシステム導入後）</th></tr>
+<tr>
+<td>投稿したいけど文章を考える時間も気力もない → 結果的に投稿しない</td>
+<td>通知が来る → 文案が3パターン届いている → 選んでコピペするだけ → Xに投稿</td>
+</tr>
+</table>
+
+<h2>役割分担</h2>
+
+<table>
+<tr><th>やること</th><th>誰が</th><th>時間</th></tr>
+<tr><td>投稿カレンダーに基づき3日前に通知を送る</td><td>Bot（自動）</td><td>—</td></tr>
+<tr><td>「GO」または変更内容をチャンネルに書く</td><td>担当者（自分）</td><td>30秒</td></tr>
+<tr><td>当日朝、投稿文3パターンを自動生成して送信</td><td>Claude（自動）</td><td>約15秒</td></tr>
+<tr><td>好きな文案をコピーしてXに投稿</td><td>担当者（自分）</td><td>1分</td></tr>
+<tr><td>文案を修正したい場合はチャンネルに指示を書く</td><td>担当者（自分）→ Claude</td><td>1〜2分</td></tr>
+</table>
+
+<div class="highlight"><strong>担当者の作業は「返信30秒 + コピペ1分」のみ。ネタを考える必要はない。</strong></div>
+
+<h2>チャンネル構成（v2：1チャンネルに統合）</h2>
+
+<table>
+<tr><th>チャンネル名</th><th>ID</th><th>用途</th><th>公開範囲</th></tr>
+<tr><td>sns-bot</td><td>1507312995041280070</td><td>通知受信・文案確認・修正依頼・突発ネタ投稿、すべてここ</td><td><strong>担当者＋Botのみ（プライベート）</strong></td></tr>
+</table>
+
+<div class="highlight">チャンネルは1つだけ。担当者とBotのプライベートチャンネル。他のメンバーには見えない。</div>
+
+<h2>通常の投稿フロー（計画投稿）</h2>
+
+<div class="flow">
+<strong>【3日前・朝9時】自動通知</strong><br>
+Bot が @担当者 にメンション（sns-botチャンネル）<br>
+「📅 3日後の投稿予定：[日付]　テーマ：[テーマ]<br>
+　そのまま進める場合は「GO」と書いてください。<br>
+　変更・追加情報があればそのまま書いてください。」<br><br>
+
+<strong>【3日前〜前日】担当者が返信（3パターンから選べる）</strong><br>
+　① 「GO」と書く → カレンダー通りのテーマで当日文案を生成<br>
+　② 「オニキが新キャラ触った感想：〇〇」→ その情報をネタに文案生成<br>
+　③ 「今日弟がトパチャン勝ったのでそっちで」→ 新ネタで文案生成<br>
+　→ <strong>何を書いても必ず3パターンが返ってくる</strong><br><br>
+
+<strong>【当日・朝8時】自動で文案を送信</strong><br>
+Bot が sns-bot チャンネルに3パターンの投稿文を送付 ＋ @担当者 メンション<br><br>
+
+<strong>【当日】担当者が投稿</strong><br>
+好きな文案をコピーしてXに貼り付けて投稿<br><br>
+
+<strong>【修正したい場合】sns-botチャンネルに指示を書く</strong><br>
+「もっとシンプルに」「サトルのキャラに寄せて」など<br>
+→ <strong>必ず3パターンが返ってくる</strong>（スマホからでも使える）<br>
+→ 気に入ったものをコピーしてXに投稿
+</div>
+
+<h2>突発・速報投稿フロー</h2>
+
+<p>カレンダーにない急なネタが出た時も <strong>sns-botチャンネル</strong> を使う。</p>
+
+<div class="flow">
+① sns-botチャンネルにネタを一言書く<br>
+　例：「試合結果出た」「選手が練習で面白いこと言ってた」<br><br>
+② Botが 👀 リアクションで受信確認<br><br>
+③ 即座に3パターンの文案が届く<br><br>
+④ 好きな文案をコピーしてXに投稿<br><br>
+⑤ 修正したい場合はチャンネルに指示を書く → 3パターンが返ってくる
+</div>
+
+<div class="highlight">
+<strong>1つのチャンネルで全操作が完結。スマホからでも操作可能。</strong><br>
+担当者が何を書いても → Botは必ず3パターンを返す。1対3を厳守。
+</div>
+
+<h2>選手情報</h2>
+
+<table>
+<tr><th>選手</th><th>年齢</th><th>絵文字</th><th>Twitterハンドル</th><th>特徴</th></tr>
+<tr><td>オニキ</td><td>26歳</td><td>🥷</td><td>@oniki_dayo</td><td>ゲージ管理・状況管理。チームメイト全員が「器用」。穴がない。</td></tr>
+<tr><td>サトル</td><td>18歳</td><td>🌪️</td><td>@satoru1_3106</td><td>戦い方が独特・アグレッシブ。チームメイト全員が「独特」。</td></tr>
+<tr><td>双子の兄</td><td>14歳</td><td>🦯</td><td>@murasaki_15922</td><td>咄嗟のコンボ選択・反応速度。土壇場に強い。頼れる。</td></tr>
+<tr><td>双子の弟</td><td>14歳</td><td>🔥</td><td>@murasaki_15922</td><td>対空精度・我慢強さ。14歳で異質な冷静さ。じわじわ追い詰める。</td></tr>
+<tr><td>あしゅまる</td><td>19歳</td><td>🦯</td><td>@ashumaru_sf6</td><td>対空の使い分け・コンボ精度。追い詰められてからが本番。逆転屋。</td></tr>
+</table>
+
+<h3>誕生日</h3>
+
+<table>
+<tr><th>選手</th><th>誕生日</th><th>備考</th></tr>
+<tr><td>サトル</td><td>7月23日（19歳）</td><td></td></tr>
+<tr><td>双子の兄・弟</td><td>9月22日（15歳）</td><td><strong>公式大会解禁日と同日。最大の山場。</strong></td></tr>
+<tr><td>あしゅまる</td><td>11月9日（20歳）</td><td></td></tr>
+<tr><td>オニキ</td><td>12月10日（27歳）</td><td></td></tr>
+</table>
+
+<h2>投稿ルール（Claudeへの指示に組み込み済み）</h2>
+<ul>
+<li>末尾に必ず <strong>#NthWIN #SF6</strong></li>
+<li>黄色いハート（💛）は使わない</li>
+<li>選手名を入れる場合は「絵文字＋名前＋@ハンドル」の形式にし、その後改行して文を続ける<br>
+　例：🥷オニキ @oniki_dayo<br>
+　　　が本日も大会に挑みます。</li>
+<li>140字以内</li>
+<li>敬語ベースだが堅すぎない</li>
+</ul>
+
+<h2>大会スケジュール（2026年）</h2>
+
+<table>
+<tr><th>日程</th><th>大会</th><th>出場選手</th></tr>
+<tr><td>現在進行中</td><td>TOPANGAチャンピオンシップ BEGINNING STAGE レッドディビジョン</td><td>双子の弟（招待選手）</td></tr>
+<tr><td>7月5日</td><td>WW #2 JAPAN ONLINE</td><td>オニキ・サトル・あしゅまる</td></tr>
+<tr><td>8月30日</td><td>WW #3 JAPAN ONLINE</td><td>オニキ・サトル・あしゅまる</td></tr>
+<tr><td>9月22日〜</td><td>双子の公式大会解禁（誕生日と同日）</td><td>全員</td></tr>
+<tr><td>10月18日</td><td>WW #4 JAPAN ONLINE</td><td>全員（初）</td></tr>
+<tr><td>11月29日</td><td>WW #5 JAPAN OFFLINE</td><td>全員</td></tr>
+<tr><td>12月13日</td><td>Regional Finals</td><td>全員</td></tr>
+</table>
+
+<h2>確定済みの投稿ストック</h2>
+
+<h3>第1投稿（今すぐ使える）</h3>
+<pre>【お知らせ】
+
+双子の弟、
+第7期TOPANGAチャンピオンシップ
+BEGINNING STAGE レッドディビジョンに出場します。
+
+国内最高峰のリーグ戦、賞金総額1,500万円。
+招待選手として認められた、14歳。
+
+NORTHEPTIONは全力で応援します。
+
+🔥 #NthWIN #SF6 #トパチャン</pre>
+
+<h3>選手紹介5本（6月Week1〜2に使う予定）</h3>
+
+<p><strong>オニキ</strong></p>
+<pre>【選手紹介】オニキ
+
+本人：
+「ゲージと状況、常に見ている。」
+
+チームメイト4人全員が口を揃えた。
+「器用」。
+
+知識、ゲージ管理、防御、安定した立ち回り。
+どこを切り取っても穴がない。
+負けない選択肢を取り続ける、26歳。
+
+これがNORTHEPTIONのエース。
+🥷 #NthWIN #SF6</pre>
+
+<p><strong>サトル</strong></p>
+<pre>【選手紹介】サトル
+
+本人：
+「戦い方は独特。アグレッシブに行く。」
+
+チームメイト4人全員が同じ言葉を使った。
+「独特」。
+
+真似できないスタイルで攻め、
+思い切りよく択を通す。
+18歳でこれだけ個性的な
+格闘ができる選手は、そういない。
+
+NORTHEPTIONの異端児、18歳。
+🌪️ #NthWIN #SF6</pre>
+
+<p><strong>双子の兄</strong></p>
+<pre>【選手紹介】双子の兄
+
+本人：
+「咄嗟のコンボと反応速度には自信がある。」
+
+チームメイトが見ていたのは瞬間だった。
+咄嗟のコンボ選択、反応速度、対空の正確さ。
+そしてピンチの場面で勝負手にいける胆力。
+
+土壇場に強い。
+「頼れる」という言葉が一番似合う、14歳。
+
+🦯 #NthWIN #SF6</pre>
+
+<p><strong>双子の弟</strong></p>
+<pre>【選手紹介】双子の弟
+
+本人：
+「対空精度と反応。それが自分の武器。」
+
+チームメイト2人が「対空精度」、
+2人が「我慢強さ」を挙げた。
+
+速い展開でも崩れず、
+状況を確認しながらどっしり待てる。
+
+14歳でこの冷静さは、異質だ。
+じわじわと、相手を追い詰める。
+
+そして今、トパンガチャンピオンシップで戦っている。
+🔥 #NthWIN #SF6</pre>
+
+<p><strong>あしゅまる</strong></p>
+<pre>【選手紹介】あしゅまる
+
+本人：
+「対空の使い分けとコンボ。そこは負けない。」
+
+チームメイト4人全員が挙げた言葉がある。
+「対空の使い分け」。
+
+状況に応じたコンボルートの選択も正確で、
+瞬時の判断が常にブレない。
+
+派手ではないが、確実に機能する。
+対空もコンボも、気づいたら完璧だった、19歳。
+
+🦯 #NthWIN #SF6</pre>
+
+<h2>投稿カレンダー（6月〜11月）</h2>
+
+<table>
+<tr><th>時期</th><th>テーマ</th><th>ネタ元</th></tr>
+<tr><td>6月Week1〜2</td><td>活動再開宣言・選手紹介5本</td><td>確定済みストック</td></tr>
+<tr><td>6月Week3</td><td>チーム全体像・トパンガ解禁発表</td><td>確定済みストック</td></tr>
+<tr><td>6月Week4</td><td>トパンガ連載・WW#2告知</td><td>大会カレンダー</td></tr>
+<tr><td>7月Week1〜2</td><td>WW#2直前・結果・サトル誕生日直前</td><td>大会カレンダー</td></tr>
+<tr><td>7月Week3</td><td>🎂 サトル19歳</td><td>誕生日</td></tr>
+<tr><td>7月Week4〜5</td><td>トパンガ連載・WW#3準備</td><td>大会カレンダー</td></tr>
+<tr><td>8月</td><td>WW#3・双子解禁匂わせ</td><td>大会カレンダー</td></tr>
+<tr><td>9月Week1〜3</td><td>双子解禁カウントダウン</td><td>自動生成</td></tr>
+<tr><td>9月Week4</td><td>🎂🔥 双子15歳・公式大会解禁</td><td><strong>最大の山場</strong></td></tr>
+<tr><td>10月</td><td>WW#4 全員初陣</td><td>大会カレンダー</td></tr>
+<tr><td>11月Week1</td><td>🎂 あしゅまる20歳</td><td>誕生日</td></tr>
+<tr><td>11月Week2〜4</td><td>WW#5 オフライン初出場</td><td>大会カレンダー</td></tr>
+</table>
+
+<div class="highlight"><strong>週3本（月・水・金）を維持。ネタ切れゼロ設計。</strong></div>
+
+<h3>カレンダー管理について</h3>
+<ul>
+<li>半年分のスケジュールをあらかじめシステムに登録しておく</li>
+<li>残り<strong>1ヶ月を切ったら</strong>、Botが自動で警告を通知する<br>
+　「⚠️ 投稿カレンダーの残りが1ヶ月を切りました。次の半年分のスケジュールを作成してください。」</li>
+<li>通知を受けたら次の半年分のカレンダーをシステムに追加登録する</li>
+</ul>
+
+<h2>Botの起動方法</h2>
+
+<pre># プロジェクトフォルダで実行
+npm start
+
+# 本番運用（サーバー再起動後も自動で立ち上がる）
+pm2 start index.js --name northeption-bot
+pm2 save</pre>
+
+<p>起動確認：以下がターミナルに表示されれば正常</p>
+<pre>✅ NORTHEPTION-bot#9789 が起動しました
+📋 SNS管理チャンネル: 1507312995041280070</pre>
+
+<h2>注意事項</h2>
+
+<div class="caution">
+<ul>
+<li><strong>.env ファイルは絶対にGitにコミットしない</strong>（APIキーが漏洩する）</li>
+<li>Botは必ず1つだけ起動すること。複数起動すると同じ投稿に対して複数の文案が届く</li>
+<li>X APIは使用していない。投稿は必ず手動でコピペして行う</li>
+<li>発信の最終判断は必ず人間が行う（全自動投稿はしない）</li>
+</ul>
+</div>
+
+</body>
+</html>
