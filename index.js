@@ -193,13 +193,82 @@ async function sendDraftsToChannel(content, headerText) {
 
 // ── Cronジョブ ────────────────────────────────────────────────
 
+// 3日後通知の共通処理
+async function sendThreeDayNotifications() {
+  console.log('⏰ 3日前通知チェック開始');
+  const schedule = loadSchedule();
+  const threeDaysLater = getDateAfterDaysJST(3);
+  console.log(`📆 確認対象日: ${threeDaysLater}`);
+
+  let channel;
+  try {
+    channel = await client.channels.fetch(BOT_CHANNEL_ID);
+  } catch (err) {
+    console.error('チャンネル取得エラー:', err);
+    return;
+  }
+
+  const postsToNotify = schedule.posts.filter(
+    p => p.date === threeDaysLater && p.status === 'scheduled'
+  );
+  console.log(`📌 通知対象: ${postsToNotify.length}件`);
+
+  for (const post of postsToNotify) {
+    try {
+      let msg =
+        `📅 **3日後の投稿予定** <@${MANAGER_ID}>\n\n` +
+        `**日付：** ${post.date}\n` +
+        `**テーマ：** ${post.theme}\n\n`;
+
+      if (post.note) {
+        msg += `💬 **事前ヒアリング：** ${post.note}\n\n`;
+      }
+
+      msg +=
+        `「GO」と書けばそのまま進めます。\n` +
+        `変更・追加情報があればそのまま書いてください。どちらも3パターンの文案を返します。`;
+
+      await channel.send(msg);
+      post.status = 'notified';
+      currentPendingPostId = post.id;
+      console.log(`✅ 通知送信完了: ${post.id}`);
+    } catch (err) {
+      console.error(`通知送信エラー (${post.id}):`, err);
+    }
+  }
+
+  // カレンダー残量チェック（残り30日以下で警告）
+  const today = getTodayJST();
+  const remaining = schedule.posts.filter(p => p.date >= today && p.status !== 'done');
+  if (remaining.length > 0) {
+    const lastDate = remaining[remaining.length - 1].date;
+    const daysLeft = Math.floor(
+      (new Date(lastDate) - new Date(today)) / (1000 * 60 * 60 * 24)
+    );
+    if (daysLeft <= 30) {
+      try {
+        await channel.send(
+          `⚠️ <@${MANAGER_ID}> **投稿カレンダーの残りが約${daysLeft}日になりました。**\n` +
+          `次の半年分のスケジュールを作成してください。`
+        );
+      } catch (err) {
+        console.error('カレンダー残量警告送信エラー:', err);
+      }
+    }
+  }
+
+  saveSchedule(schedule);
+}
+
 // 毎朝8:00（JST）：当日の投稿文案を自動生成
 cron.schedule('0 8 * * *', async () => {
+  console.log('⏰ 8時 文案自動生成チェック開始');
   const schedule = loadSchedule();
   const today = getTodayJST();
   const todaysPosts = schedule.posts.filter(
     p => p.date === today && (p.status === 'confirmed' || p.status === 'notified')
   );
+  console.log(`📌 本日の文案生成対象: ${todaysPosts.length}件`);
 
   for (const post of todaysPosts) {
     const content = post.confirmedContent || post.theme;
@@ -219,50 +288,7 @@ cron.schedule('0 8 * * *', async () => {
 
 // 毎朝9:00（JST）：3日後の投稿を通知 ＋ カレンダー残量チェック
 cron.schedule('0 9 * * *', async () => {
-  const schedule = loadSchedule();
-  const threeDaysLater = getDateAfterDaysJST(3);
-  const channel = await client.channels.fetch(BOT_CHANNEL_ID);
-
-  const postsToNotify = schedule.posts.filter(
-    p => p.date === threeDaysLater && p.status === 'scheduled'
-  );
-
-  for (const post of postsToNotify) {
-    let msg =
-      `📅 **3日後の投稿予定** <@${MANAGER_ID}>\n\n` +
-      `**日付：** ${post.date}\n` +
-      `**テーマ：** ${post.theme}\n\n`;
-
-    if (post.note) {
-      msg += `💬 **事前ヒアリング：** ${post.note}\n\n`;
-    }
-
-    msg +=
-      `「GO」と書けばそのまま進めます。\n` +
-      `変更・追加情報があればそのまま書いてください。どちらも3パターンの文案を返します。`;
-
-    await channel.send(msg);
-    post.status = 'notified';
-    currentPendingPostId = post.id;
-  }
-
-  // カレンダー残量チェック（残り30日以下で警告）
-  const today = getTodayJST();
-  const remaining = schedule.posts.filter(p => p.date >= today && p.status !== 'done');
-  if (remaining.length > 0) {
-    const lastDate = remaining[remaining.length - 1].date;
-    const daysLeft = Math.floor(
-      (new Date(lastDate) - new Date(today)) / (1000 * 60 * 60 * 24)
-    );
-    if (daysLeft <= 30) {
-      await channel.send(
-        `⚠️ <@${MANAGER_ID}> **投稿カレンダーの残りが約${daysLeft}日になりました。**\n` +
-        `次の半年分のスケジュールを作成してください。`
-      );
-    }
-  }
-
-  saveSchedule(schedule);
+  await sendThreeDayNotifications();
 }, { timezone: 'Asia/Tokyo' });
 
 // ── Discord イベント ──────────────────────────────────────────
@@ -286,6 +312,24 @@ client.on('messageCreate', async (message) => {
   if (!message.content.trim()) return;
 
   const text = message.content.trim();
+
+  // 管理コマンド
+  if (text === '!notify') {
+    await message.react('🔔');
+    await sendThreeDayNotifications();
+    return;
+  }
+  if (text === '!status') {
+    const schedule = loadSchedule();
+    const today = getTodayJST();
+    const upcoming = schedule.posts
+      .filter(p => p.date >= today && p.status !== 'done')
+      .slice(0, 5);
+    const lines = upcoming.map(p => `・${p.date} [${p.status}] ${p.theme}`).join('\n');
+    await message.reply(`📋 **直近5件の予定**\n${lines || 'なし'}\n\n待機中の投稿ID: ${currentPendingPostId || 'なし'}`);
+    return;
+  }
+
   let content = text;
 
   // 3日前通知への返信処理（GOまたは変更内容）
