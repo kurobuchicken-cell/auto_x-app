@@ -333,13 +333,40 @@ client.on('messageCreate', async (message) => {
   let content = text;
 
   // 3日前通知への返信処理（GOまたは変更内容）
-  if (currentPendingPostId) {
+  if (text.toUpperCase() === 'GO') {
+    const schedule = loadSchedule();
+    let post = null;
+
+    // まずメモリ上のIDで検索
+    if (currentPendingPostId) {
+      post = schedule.posts.find(p => p.id === currentPendingPostId && p.status === 'notified');
+    }
+
+    // 再起動後などでIDが消えていた場合は、直近の未対応投稿を自動検索
+    if (!post) {
+      const today = getTodayJST();
+      post = schedule.posts.find(
+        p => p.date >= today && (p.status === 'notified' || p.status === 'scheduled')
+      );
+    }
+
+    if (post) {
+      content = post.confirmedContent || post.theme;
+      post.confirmedContent = content;
+      post.status = 'confirmed';
+      currentPendingPostId = null;
+      saveSchedule(schedule);
+      console.log(`✅ GO受信 → 投稿テーマ: ${content}`);
+    } else {
+      await message.reply('⚠️ 直近の投稿予定が見つかりませんでした。テーマを直接入力してください。');
+      return;
+    }
+  } else if (currentPendingPostId) {
     const schedule = loadSchedule();
     const post = schedule.posts.find(p => p.id === currentPendingPostId);
 
     if (post && post.status === 'notified') {
-      const isGo = text.toUpperCase() === 'GO';
-      content = isGo ? post.theme : text;
+      content = text;
       post.confirmedContent = content;
       post.status = 'confirmed';
       currentPendingPostId = null;
