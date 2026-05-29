@@ -183,12 +183,10 @@ async function sendDraftsToChannel(content, headerText) {
     await channel.send(headerText);
   }
 
-  // 3パターンをコードブロックで送信（スマホでワンタップコピー可能）
-  const output = patterns.slice(0, 3).map(p =>
-    `**【${p.label}】**\n\`\`\`\n${p.content}\n\`\`\``
-  ).join('\n\n');
-
-  await channel.send(output);
+  // 3パターンを1投稿ずつ送信（スマホでのコピーを容易にするため）
+  for (const p of patterns.slice(0, 3)) {
+    await channel.send(`**【${p.label}】**\n\`\`\`\n${p.content}\n\`\`\``);
+  }
 }
 
 // ── Cronジョブ ────────────────────────────────────────────────
