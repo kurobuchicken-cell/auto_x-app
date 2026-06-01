@@ -258,13 +258,13 @@ async function sendThreeDayNotifications() {
   saveSchedule(schedule);
 }
 
-// 毎朝8:00（JST）：当日の投稿文案を自動生成
-cron.schedule('0 8 * * *', async () => {
-  console.log('⏰ 8時 文案自動生成チェック開始');
+// 当日文案送信の共通処理
+async function sendTodayDrafts() {
+  console.log('⏰ 本日の文案生成チェック開始');
   const schedule = loadSchedule();
   const today = getTodayJST();
   const todaysPosts = schedule.posts.filter(
-    p => p.date === today && (p.status === 'confirmed' || p.status === 'notified')
+    p => p.date === today && p.status !== 'drafts_sent' && p.status !== 'done'
   );
   console.log(`📌 本日の文案生成対象: ${todaysPosts.length}件`);
 
@@ -282,16 +282,21 @@ cron.schedule('0 8 * * *', async () => {
   }
 
   saveSchedule(schedule);
+}
+
+// 毎朝8:01（JST）：当日の投稿文案を自動生成（1秒ずらしてmissed execution回避）
+cron.schedule('1 8 * * *', async () => {
+  await sendTodayDrafts();
 }, { timezone: 'Asia/Tokyo' });
 
-// 毎朝9:00（JST）：3日後の投稿を通知 ＋ カレンダー残量チェック
-cron.schedule('0 9 * * *', async () => {
+// 毎朝9:01（JST）：3日後の投稿を通知 ＋ カレンダー残量チェック
+cron.schedule('1 9 * * *', async () => {
   await sendThreeDayNotifications();
 }, { timezone: 'Asia/Tokyo' });
 
 // ── Discord イベント ──────────────────────────────────────────
 
-client.on('ready', () => {
+client.on('ready', async () => {
   console.log(`✅ ${client.user.tag} が起動しました`);
   console.log(`📋 SNS管理チャンネル: ${BOT_CHANNEL_ID}`);
 
@@ -301,6 +306,19 @@ client.on('ready', () => {
   if (notified.length > 0) {
     currentPendingPostId = notified[notified.length - 1].id;
     console.log(`📌 返信待ち投稿を復元: ${currentPendingPostId}`);
+  }
+
+  // 起動時キャッチアップ：8時以降に起動した場合、当日の未送信文案を自動送信
+  const jstHour = new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCHours();
+  if (jstHour >= 8) {
+    const today = getTodayJST();
+    const missed = schedule.posts.filter(
+      p => p.date === today && p.status !== 'drafts_sent' && p.status !== 'done'
+    );
+    if (missed.length > 0) {
+      console.log(`🔄 起動時キャッチアップ：本日の未送信文案を送信`);
+      await sendTodayDrafts();
+    }
   }
 });
 
@@ -315,6 +333,11 @@ client.on('messageCreate', async (message) => {
   if (text === '!notify') {
     await message.react('🔔');
     await sendThreeDayNotifications();
+    return;
+  }
+  if (text === '!draft') {
+    await message.react('✍️');
+    await sendTodayDrafts();
     return;
   }
   if (text === '!status') {
