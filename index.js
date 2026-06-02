@@ -1,7 +1,6 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const Anthropic = require('@anthropic-ai/sdk');
-const cron = require('node-cron');
 const fs = require('fs');
 const path = require('path');
 
@@ -284,15 +283,28 @@ async function sendTodayDrafts() {
   saveSchedule(schedule);
 }
 
-// 毎朝8:01（JST）：当日の投稿文案を自動生成（1秒ずらしてmissed execution回避）
-cron.schedule('1 8 * * *', async () => {
-  await sendTodayDrafts();
-}, { timezone: 'Asia/Tokyo' });
+// node-cronの代わりにsetIntervalで毎分チェック（Fly.io共有CPUでのmissed execution対策）
+let lastDraftDate = null;
+let lastNotifyDate = null;
 
-// 毎朝9:01（JST）：3日後の投稿を通知 ＋ カレンダー残量チェック
-cron.schedule('1 9 * * *', async () => {
-  await sendThreeDayNotifications();
-}, { timezone: 'Asia/Tokyo' });
+setInterval(async () => {
+  const now = new Date(Date.now() + 9 * 60 * 60 * 1000); // JST
+  const h = now.getUTCHours();
+  const m = now.getUTCMinutes();
+  const today = now.toISOString().split('T')[0];
+
+  // 8:00〜8:10 の間に1回だけ文案送信
+  if (h === 8 && m < 10 && lastDraftDate !== today) {
+    lastDraftDate = today;
+    await sendTodayDrafts();
+  }
+
+  // 9:00〜9:10 の間に1回だけ3日前通知
+  if (h === 9 && m < 10 && lastNotifyDate !== today) {
+    lastNotifyDate = today;
+    await sendThreeDayNotifications();
+  }
+}, 60 * 1000);
 
 // ── Discord イベント ──────────────────────────────────────────
 
