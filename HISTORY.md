@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-06-16 Gmail OAuthトークン期限切れによるSlack通知停止
+
+**症状:** 9:00 JSTにメールチェックは実行されたが、両Gmailアカウント（info・contact）で `invalid_grant` エラーが発生。メール取得0件 → Slack通知がスキップされた。
+
+**根本原因:** Google Cloud ConsoleのOAuth同意画面が「テスト」モードのままだった。テストモードではセンシティブスコープのリフレッシュトークンが**7日で失効**する。
+
+**解決:**
+1. `mail_check-app/scripts/auth.js` で両アカウントを再認証（新トークン取得）
+2. `setup-secrets.js` で Fly.io の `GMAIL_INFO_TOKEN` / `GMAIL_CONTACT_TOKEN` を更新
+3. Google Cloud ConsoleでOAuth同意画面を「テスト」→「本番」に公開
+4. 本番モードで再認証・再登録（本番モード発行のトークンは使用継続する限り無期限）
+
+**教訓:**
+- OAuth同意画面はテストモードのまま運用しない。本番公開後も `gmail.readonly` 程度のスコープならGoogleの審査は不要。
+- 「このアプリはGoogleで確認されていません」警告が出ても、自社内部ツールなら「詳細」→「移動（安全でないページ）」で進んで問題なし。
+- 再発確認：翌日9:00 JST のSlack通知で正常動作を確認する。
+
+---
+
 ## 2026-06-15 Slack通知2重送信問題
 
 **症状:** Slackに同じメール日次レポートが毎日2回届く。
