@@ -23,7 +23,7 @@
 <body>
 
 <h1>NORTHEPTION SNS半自動投稿システム 仕様書</h1>
-<p style="color:#666; font-size:9pt;">作成日：2026年5月22日　最終更新：2026年5月22日（v2）</p>
+<p style="color:#666; font-size:9pt;">作成日：2026年5月22日　最終更新：2026年6月16日（v5）</p>
 
 <hr>
 
@@ -80,6 +80,12 @@ Bot が @担当者 にメンション（sns-botチャンネル）<br>
 
 <strong>【当日・朝8時】自動で文案を送信</strong><br>
 Bot が sns-bot チャンネルに3パターンの投稿文を送付 ＋ @担当者 メンション<br><br>
+
+<strong>【当日・朝8時・文案送信直後】シフト確認（時限投稿以外）</strong><br>
+Botが続けてシフト確認メッセージを送信し、✅ と ❌ のリアクションを付ける：<br>
+「↩️ 今日のテーマを別のネタに差し替える場合：✅ → 今日のテーマを次回に回す　❌ → このまま進める」<br>
+　✅ を押す → 今日のテーマが次回以降にずれ（1つシフト）、今日は「done」扱いになる<br>
+　❌ を押す → そのまま通常通り進む<br><br>
 
 <strong>【当日】担当者が投稿</strong><br>
 好きな文案をコピーしてXに貼り付けて投稿<br><br>
@@ -283,27 +289,165 @@ NORTHEPTIONの異端児、18歳。
 <li>通知を受けたら次の半年分のカレンダーをシステムに追加登録する</li>
 </ul>
 
-<h2>Botの起動方法</h2>
+<h2>技術スタック・システム構成</h2>
 
-<pre># プロジェクトフォルダで実行
-npm start
+<table>
+<tr><th>項目</th><th>内容</th></tr>
+<tr><td>実行環境</td><td>Fly.io（東京リージョン nrt）で24時間稼働。PCなしで動作</td></tr>
+<tr><td>アプリ名</td><td>northeption-sns-bot</td></tr>
+<tr><td>言語・FW</td><td>Node.js / discord.js v14 / @anthropic-ai/sdk</td></tr>
+<tr><td>AIモデル</td><td>claude-opus-4-7（プロンプトキャッシュ有効）</td></tr>
+<tr><td>GitHubリポジトリ</td><td>kurobuchicken-cell/auto_x-app</td></tr>
+<tr><td>主要ファイル</td><td>index.js（Bot本体）、schedule.json（投稿カレンダー）、fly.toml（Fly.io設定）</td></tr>
+<tr><td>永続ストレージ</td><td>Fly.io Volume（/data）を使用。未マウント時はバンドル版の schedule.json で動作</td></tr>
+</table>
 
-# 本番運用（サーバー再起動後も自動で立ち上がる）
-pm2 start index.js --name northeption-bot
-pm2 save</pre>
+<h3>Fly.io Volume（schedule.json 永続化）</h3>
+<p>Fly.io Volume が <code>/data</code> にマウントされている場合、<code>schedule.json</code> は <code>/data/schedule.json</code> に保存され、デプロイをまたいでステータスが保持される。</p>
+<ul>
+<li><strong>初回起動時</strong>：<code>/data/schedule.json</code> が存在しない場合、バンドル版を自動コピーして初期化する</li>
+<li><strong>カレンダー更新時</strong>：<code>!reload</code> コマンドで最新のバンドル版を取り込む（既存ステータスは保持）</li>
+<li><strong>Volume未使用時</strong>：バンドル版を直接使用（デプロイのたびにステータスがリセットされる従来の動作）</li>
+</ul>
 
-<p>起動確認：以下がターミナルに表示されれば正常</p>
-<pre>✅ NORTHEPTION-bot#9789 が起動しました
+<h2>自動タイマーの仕組み</h2>
+
+<p>node-cronは使用せず、<strong>setInterval（1分毎チェック）</strong>で動作する。Fly.ioの共有CPUでcronが実行されないmissed execution問題を回避するため。</p>
+
+<table>
+<tr><th>時刻（JST）</th><th>動作</th><th>条件</th></tr>
+<tr><td>8:00〜8:10</td><td>当日の投稿文案を自動生成・送信</td><td>その日まだ送信していない場合のみ1回</td></tr>
+<tr><td>9:00〜9:10</td><td>3日後の投稿予定を通知 ＋ カレンダー残量チェック</td><td>その日まだ通知していない場合のみ1回</td></tr>
+<tr><td>9:00〜9:10</td><td>Gmail メールチェック → 対象メールをSlackに通知</td><td>その日まだ実行していない場合のみ1回（ロックファイルで制御）</td></tr>
+</table>
+
+<h3>起動時キャッチアップ</h3>
+<p>Bot起動時に<strong>JSTで8時以降</strong>だった場合、当日の未送信文案を自動送信する。<strong>JSTで9時以降</strong>かつ当日未実行の場合はメールチェックも自動実行する。Fly.ioの再起動後でも朝の処理が届く。</p>
+
+<h3>GOコマンドのフォールバック</h3>
+<p>「GO」と送信した際、Botは以下の順で投稿を特定する：</p>
+<ol>
+<li>メモリ上に保持している <code>currentPendingPostId</code> で検索</li>
+<li>IDが消えていた場合（再起動後など）、直近の <code>notified</code> または <code>scheduled</code> 状態の投稿を自動検索</li>
+</ol>
+<p>再起動後でも「GO」が正しく機能する。</p>
+
+<h2>手動コマンド</h2>
+
+<table>
+<tr><th>コマンド</th><th>動作</th><th>用途</th></tr>
+<tr><td><code>!draft</code></td><td>当日の投稿文案を即時生成・送信</td><td>8時の自動送信を待たずに今すぐ文案が欲しい時</td></tr>
+<tr><td><code>!notify</code></td><td>3日後の通知を即時送信</td><td>9時の自動通知を待たずに確認したい時</td></tr>
+<tr><td><code>!status</code></td><td>直近5件の予定と状態を表示</td><td>カレンダー状況の確認</td></tr>
+<tr><td><code>!shift</code></td><td>今日のテーマを次回以降に1つずらす（時限投稿は固定）</td><td>今日のテーマを後回しにしたい時（朝のリアクション確認の代替手段としても使用可）</td></tr>
+<tr><td><code>!reload</code></td><td>Fly.io VolumeのスケジュールをDockerイメージの最新版で上書き更新（既存のステータスは保持）</td><td>デプロイ後にカレンダーを最新化したい時（Volume使用時のみ有効）</td></tr>
+</table>
+
+<h2>文案の送信形式</h2>
+
+<p>生成された3パターンの文案は、<strong>1パターンにつき1メッセージ</strong>で送信される（合計3メッセージ）。スマートフォンからでも各パターンを個別にコピーしやすくするため。</p>
+
+<pre>📅 本日（2026-06-03）の投稿文案です @担当者
+> テーマ名
+
+**【シンプル】**
+```
+（投稿文）#NthWIN #SF6
+```
+
+**【熱量高め】**
+```
+（投稿文）#NthWIN #SF6
+```
+
+**【ファン巻き込み】**
+```
+（投稿文）#NthWIN #SF6
+```</pre>
+
+<h2>Gmailメールチェック機能</h2>
+
+<p>毎朝9時に <code>contact@northeption.com</code> と <code>info@northeption.com</code> の受信メールを取得し、AIで分類して重要メールのみSlackに通知する。</p>
+
+<table>
+<tr><th>カテゴリ</th><th>内容</th><th>通知</th></tr>
+<tr><td>A〜D, G_PRIME</td><td>スポンサー・メディア・取材・大会関係など重要メール</td><td>Slackに通知</td></tr>
+<tr><td>I（未分類）</td><td>AIが判断できなかったメール</td><td>Slackに通知（要確認）</td></tr>
+<tr><td>その他</td><td>広告・自動送信・無関係メールなど</td><td>スキップ</td></tr>
+</table>
+
+<p>通知対象・未分類ともに0件の場合はSlack送信自体がスキップされる（毎日必ず通知が来るわけではない）。</p>
+
+<h3>関連ファイル</h3>
+<ul>
+<li><code>services/mail/run.js</code>：メールチェックのエントリーポイント</li>
+<li><code>services/mail/gmail/fetch.js</code>：Gmail API でメール取得</li>
+<li><code>services/mail/classify/classifier.js</code>：AIによる分類</li>
+<li><code>services/mail/notify/slack.js</code>：Slack webhook 送信</li>
+<li><code>services/mail/logger/logger.js</code>：重複送信防止・ログ管理（/data/logs/ に保存）</li>
+<li><code>services/mail/auth/gmail-auth.js</code>：OAuth認証クライアント</li>
+</ul>
+
+<h3>Gmail OAuth認証（トークン更新手順）</h3>
+<p>トークンが期限切れ（<code>invalid_grant</code>）になった場合、または初回セットアップ時に実行する。</p>
+<pre># 1. mail_check-app ディレクトリで再認証
+cd ..\mail_check-app
+node scripts\auth.js info       # info@northeption.com でブラウザログイン
+node scripts\auth.js contact    # contact@northeption.com でブラウザログイン
+
+# 2. 新しいトークンを Fly.io に登録
+cd ..\auto_x-app
+node setup-secrets.js</pre>
+
+<div class="highlight">
+<strong>注意：</strong> Google Cloud ConsoleのOAuth同意画面は<strong>「本番」モード</strong>で運用すること。テストモードのままだとリフレッシュトークンが7日で失効する。<br>
+認証時に「このアプリはGoogleで確認されていません」と出た場合は「詳細」→「移動（安全でないページ）」で進む（社内ツールのため問題なし）。
+</div>
+
+<h2>環境変数</h2>
+
+<p>実際の値はFly.ioのSecretsにのみ保存。<code>.env</code>ファイルは空欄で運用。</p>
+
+<table>
+<tr><th>変数名</th><th>内容</th></tr>
+<tr><td>DISCORD_BOT_TOKEN</td><td>Discordアプリのボットトークン</td></tr>
+<tr><td>ANTHROPIC_API_KEY</td><td>Anthropic Claude APIキー</td></tr>
+<tr><td>DISCORD_BOT_CHANNEL_ID</td><td>sns-botチャンネルのID（1507312995041280070）</td></tr>
+<tr><td>DISCORD_MANAGER_ID</td><td>担当者のDiscordユーザーID（メンションに使用）</td></tr>
+<tr><td>GMAIL_CLIENT_ID</td><td>Google Cloud ConsoleのOAuth 2.0クライアントID</td></tr>
+<tr><td>GMAIL_CLIENT_SECRET</td><td>Google Cloud ConsoleのOAuth 2.0クライアントシークレット</td></tr>
+<tr><td>GMAIL_INFO_TOKEN</td><td>info@northeption.com のOAuthリフレッシュトークン（JSON）</td></tr>
+<tr><td>GMAIL_CONTACT_TOKEN</td><td>contact@northeption.com のOAuthリフレッシュトークン（JSON）</td></tr>
+<tr><td>SLACK_WEBHOOK_URL</td><td>メール通知先のSlack Incoming Webhook URL</td></tr>
+<tr><td>SLACK_MENTION_USER_ID</td><td>Slack通知でメンションするユーザーID（省略可）</td></tr>
+</table>
+
+<h2>デプロイ・運用コマンド</h2>
+
+<pre># コード変更後のデプロイ（Fly.ioでビルド・デプロイ）
+flyctl deploy --remote-only
+
+# ログ確認
+flyctl logs --app northeption-sns-bot --no-tail
+
+# ローカルでの動作確認（テスト用）
+npm start</pre>
+
+<p>起動確認：Fly.ioのログに以下が表示されれば正常</p>
+<pre>✅ NORTHEPTION-bot#XXXX が起動しました
 📋 SNS管理チャンネル: 1507312995041280070</pre>
 
 <h2>注意事項</h2>
 
 <div class="caution">
 <ul>
+<li><strong>DISCORD_BOT_TOKEN と ANTHROPIC_API_KEY はチャットに絶対書かない</strong>（Anthropicが自動検出してDiscordがトークンを無効化するため）</li>
 <li><strong>.env ファイルは絶対にGitにコミットしない</strong>（APIキーが漏洩する）</li>
 <li>Botは必ず1つだけ起動すること。複数起動すると同じ投稿に対して複数の文案が届く</li>
 <li>X APIは使用していない。投稿は必ず手動でコピペして行う</li>
 <li>発信の最終判断は必ず人間が行う（全自動投稿はしない）</li>
+<li><strong>Fly.io Volume を使用している場合</strong>、schedule.json のステータスはデプロイをまたいで保持される。カレンダーを更新した後は <code>!reload</code> を実行すること</li>
+<li><strong>Fly.io Volume を使用していない場合</strong>、schedule.json はDockerイメージに焼き込まれているためデプロイのたびにステータスがリセットされる</li>
 </ul>
 </div>
 
