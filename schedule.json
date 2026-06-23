@@ -1,10 +1,10 @@
 {
   "posts": [
-    {"id": "2026-06-01", "date": "2026-06-01", "theme": "活動再開宣言「NORTHEPTIONは、まだここにいる。」", "status": "scheduled", "confirmedContent": null},
+    {"id": "2026-06-01", "date": "2026-06-01", "theme": "活動再開宣言「NORTHEPTIONは、まだここにいる。」", "status": "done", "confirmedContent": null},
     {"id": "2026-06-03", "date": "2026-06-03", "theme": "新キャラ・イングリット解禁。各選手の第一印象", "status": "scheduled", "confirmedContent": null, "note": "各選手にイングリットの第一印象・使用感を聞いてください。コメントをそのままこのチャンネルに貼り付ければ文案を作ります。", "timeSensitive": true},
-    {"id": "2026-06-05", "date": "2026-06-05", "theme": "選手紹介①オニキ", "status": "scheduled", "confirmedContent": null},
-    {"id": "2026-06-06", "date": "2026-06-06", "theme": "選手紹介②サトル", "status": "scheduled", "confirmedContent": null},
-    {"id": "2026-06-08", "date": "2026-06-08", "theme": "選手紹介③双子の兄", "status": "scheduled", "confirmedContent": null},
+    {"id": "2026-06-05", "date": "2026-06-05", "theme": "選手紹介①オニキ", "status": "done", "confirmedContent": null},
+    {"id": "2026-06-06", "date": "2026-06-06", "theme": "選手紹介②サトル", "status": "done", "confirmedContent": null},
+    {"id": "2026-06-08", "date": "2026-06-08", "theme": "選手紹介③双子の兄", "status": "done", "confirmedContent": null},
     {"id": "2026-06-19", "date": "2026-06-19", "theme": "WW #2 エントリー締切6/29。オニキ・サトル・あしゅまる出場へ", "status": "scheduled", "confirmedContent": null, "timeSensitive": true},
     {"id": "2026-06-24", "date": "2026-06-24", "theme": "選手紹介④双子の弟（トパンガ出場中に触れる）", "status": "scheduled", "confirmedContent": null},
     {"id": "2026-06-26", "date": "2026-06-26", "theme": "選手紹介⑤あしゅまる", "status": "scheduled", "confirmedContent": null},

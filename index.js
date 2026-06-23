@@ -1,5 +1,6 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
+const { runMailCheck } = require('./services/mail/run');
 const Anthropic = require('@anthropic-ai/sdk');
 const fs = require('fs');
 const path = require('path');
@@ -9,15 +10,20 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMessageReactions,
   ],
-  partials: [Partials.Message, Partials.Channel],
+  partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 });
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const BOT_CHANNEL_ID = process.env.DISCORD_BOT_CHANNEL_ID;
 const MANAGER_ID = process.env.DISCORD_MANAGER_ID;
-const SCHEDULE_FILE = path.join(__dirname, 'schedule.json');
+const BUNDLED_SCHEDULE_FILE = path.join(__dirname, 'schedule.json');
+// Fly.io Volume がマウントされていれば /data を使う（永続化）、なければバンドル版
+const SCHEDULE_FILE = fs.existsSync('/data')
+  ? path.join('/data', 'schedule.json')
+  : BUNDLED_SCHEDULE_FILE;
 
 const SYSTEM_PROMPT = `あなたはNORTHEPTION（プロeスポーツチーム）のSNS担当です。
 担当者や選手がDiscordに投稿したネタをもとに、X（Twitter）投稿文案を3パターン生成してください。
@@ -91,6 +97,13 @@ function getDateAfterDaysJST(days) {
 
 // 3日前通知を送った投稿ID（返信を紐づけるため）
 let currentPendingPostId = null;
+
+// シフト確認メッセージのID（リアクション待ち）
+let currentShiftPromptMessageId = null;
+
+// 前回投稿の完了確認待ち（前回の投稿ID／確認メッセージID）
+let currentPrevConfirmPostId = null;
+let currentPrevConfirmMessageId = null;
 
 // ── Claude API ────────────────────────────────────────────────
 
@@ -188,6 +201,36 @@ async function sendDraftsToChannel(content, headerText) {
   }
 }
 
+// ── シフト処理 ────────────────────────────────────────────────
+
+async function executeShift(channel) {
+  const schedule = loadSchedule();
+  const today = getTodayJST();
+  const shiftable = schedule.posts
+    .filter(p => p.date >= today && p.status !== 'done' && p.timeSensitive !== true)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  if (shiftable.length < 2) {
+    await channel.send('⚠️ シフトできる投稿が2件以上必要です。');
+    return;
+  }
+
+  for (let i = shiftable.length - 1; i > 0; i--) {
+    shiftable[i].theme = shiftable[i - 1].theme;
+    shiftable[i].confirmedContent = shiftable[i - 1].confirmedContent || null;
+    shiftable[i].note = shiftable[i - 1].note || null;
+    shiftable[i].status = 'scheduled';
+  }
+
+  shiftable[0].status = 'done';
+  shiftable[0].confirmedContent = null;
+
+  saveSchedule(schedule);
+
+  const preview = shiftable.slice(1, 4).map(p => `・${p.date}：${p.theme}`).join('\n');
+  await channel.send(`✅ コンテンツを1つずらしました（時限投稿は固定）。\n\n次の3件：\n${preview}`);
+}
+
 // ── Cronジョブ ────────────────────────────────────────────────
 
 // 3日後通知の共通処理
@@ -260,8 +303,37 @@ async function sendThreeDayNotifications() {
 // 当日文案送信の共通処理
 async function sendTodayDrafts() {
   console.log('⏰ 本日の文案生成チェック開始');
+
+  // 前回投稿の完了確認待ちの間は本日分を送らない
+  if (currentPrevConfirmMessageId) {
+    console.log('⏸️ 前回投稿の完了確認待ちのため本日分をスキップ');
+    return;
+  }
+
   const schedule = loadSchedule();
   const today = getTodayJST();
+
+  // 前回の非時限投稿が完了しているか確認（時限投稿は遡る対象から除外）
+  const prevPost = schedule.posts
+    .filter(p => p.date < today && p.timeSensitive !== true && p.status !== 'done')
+    .sort((a, b) => b.date.localeCompare(a.date))[0];
+
+  if (prevPost) {
+    try {
+      const channel = await client.channels.fetch(BOT_CHANNEL_ID);
+      const confirmMsg = await channel.send(
+        `❓ **前回の投稿「${prevPost.theme}」は投稿済みですか？** <@${MANAGER_ID}>\n✅ → 済んでいる　　❌ → まだ`
+      );
+      await confirmMsg.react('✅');
+      await confirmMsg.react('❌');
+      currentPrevConfirmMessageId = confirmMsg.id;
+      currentPrevConfirmPostId = prevPost.id;
+    } catch (err) {
+      console.error('前回投稿確認メッセージ送信エラー:', err);
+    }
+    return;
+  }
+
   const todaysPosts = schedule.posts.filter(
     p => p.date === today && p.status !== 'drafts_sent' && p.status !== 'done'
   );
@@ -269,14 +341,32 @@ async function sendTodayDrafts() {
 
   for (const post of todaysPosts) {
     const content = post.confirmedContent || post.theme;
+    let draftsSent = false;
+
     try {
       await sendDraftsToChannel(
         content,
         `📅 **本日（${post.date}）の投稿文案です** <@${MANAGER_ID}>\n> ${content}`
       );
+      draftsSent = true;
       post.status = 'drafts_sent';
     } catch (err) {
       console.error('朝の文案生成エラー:', err);
+    }
+
+    // 時限投稿でなければシフト確認を表示（文案送信の成否とは独立して実行）
+    if (draftsSent && !post.timeSensitive) {
+      try {
+        const channel = await client.channels.fetch(BOT_CHANNEL_ID);
+        const shiftMsg = await channel.send(
+          '↩️ **今日のテーマを別のネタに差し替える場合：**\n✅ → 今日のテーマを次回に回す　　❌ → このまま進める'
+        );
+        await shiftMsg.react('✅');
+        await shiftMsg.react('❌');
+        currentShiftPromptMessageId = shiftMsg.id;
+      } catch (err) {
+        console.error('シフト確認メッセージ送信エラー:', err);
+      }
     }
   }
 
@@ -286,6 +376,7 @@ async function sendTodayDrafts() {
 // node-cronの代わりにsetIntervalで毎分チェック（Fly.io共有CPUでのmissed execution対策）
 let lastDraftDate = null;
 let lastNotifyDate = null;
+let lastMailCheckDate = null;
 
 setInterval(async () => {
   const now = new Date(Date.now() + 9 * 60 * 60 * 1000); // JST
@@ -304,6 +395,12 @@ setInterval(async () => {
     lastNotifyDate = today;
     await sendThreeDayNotifications();
   }
+
+  // 9:00〜9:10 の間に1回だけメールチェック
+  if (h === 9 && m < 10 && lastMailCheckDate !== today) {
+    lastMailCheckDate = today;
+    await runMailCheck().catch(err => console.error('メールチェックエラー:', err));
+  }
 }, 60 * 1000);
 
 // ── Discord イベント ──────────────────────────────────────────
@@ -311,6 +408,12 @@ setInterval(async () => {
 client.on('ready', async () => {
   console.log(`✅ ${client.user.tag} が起動しました`);
   console.log(`📋 SNS管理チャンネル: ${BOT_CHANNEL_ID}`);
+
+  // Volume使用時：初回起動ならバンドル版をコピーして初期化
+  if (SCHEDULE_FILE !== BUNDLED_SCHEDULE_FILE && !fs.existsSync(SCHEDULE_FILE)) {
+    fs.copyFileSync(BUNDLED_SCHEDULE_FILE, SCHEDULE_FILE);
+    console.log('📋 schedule.json を Volume に初期化しました');
+  }
 
   // 起動時に currentPendingPostId を復元
   const schedule = loadSchedule();
@@ -330,6 +433,16 @@ client.on('ready', async () => {
     if (missed.length > 0) {
       console.log(`🔄 起動時キャッチアップ：本日の未送信文案を送信`);
       await sendTodayDrafts();
+    }
+  }
+
+  // 起動時キャッチアップ：9時以降に起動した場合、メールチェックを実行
+  if (jstHour >= 9) {
+    const today = getTodayJST();
+    if (lastMailCheckDate !== today) {
+      lastMailCheckDate = today;
+      console.log('🔄 起動時キャッチアップ：メールチェック実行');
+      runMailCheck().catch(err => console.error('メールチェックキャッチアップエラー:', err));
     }
   }
 });
@@ -360,6 +473,32 @@ client.on('messageCreate', async (message) => {
       .slice(0, 5);
     const lines = upcoming.map(p => `・${p.date} [${p.status}] ${p.theme}`).join('\n');
     await message.reply(`📋 **直近5件の予定**\n${lines || 'なし'}\n\n待機中の投稿ID: ${currentPendingPostId || 'なし'}`);
+    return;
+  }
+  if (text === '!shift') {
+    await executeShift(message.channel);
+    return;
+  }
+  if (text === '!reload') {
+    if (SCHEDULE_FILE === BUNDLED_SCHEDULE_FILE) {
+      await message.reply('⚠️ Volume未使用のため !reload は不要です。');
+      return;
+    }
+    const bundled = JSON.parse(fs.readFileSync(BUNDLED_SCHEDULE_FILE, 'utf8'));
+    const current = loadSchedule();
+    // 既存のステータスを保持（再送信を防ぐため）
+    const stateMap = {};
+    for (const p of current.posts) {
+      stateMap[p.id] = { status: p.status, confirmedContent: p.confirmedContent };
+    }
+    for (const p of bundled.posts) {
+      if (stateMap[p.id]) {
+        p.status = stateMap[p.id].status;
+        if (stateMap[p.id].confirmedContent) p.confirmedContent = stateMap[p.id].confirmedContent;
+      }
+    }
+    fs.writeFileSync(SCHEDULE_FILE, JSON.stringify(bundled, null, 2), 'utf8');
+    await message.reply('✅ カレンダーを最新のイメージから更新しました（既存のステータスは保持）');
     return;
   }
 
@@ -413,6 +552,43 @@ client.on('messageCreate', async (message) => {
     await sendDraftsToChannel(content);
   } catch (err) {
     console.error('メッセージ処理エラー:', err);
+  }
+});
+
+client.on('messageReactionAdd', async (reaction, user) => {
+  if (user.bot) return;
+  if (user.id !== MANAGER_ID) return;
+
+  if (currentPrevConfirmMessageId && reaction.message.id === currentPrevConfirmMessageId) {
+    currentPrevConfirmMessageId = null;
+    const postId = currentPrevConfirmPostId;
+    currentPrevConfirmPostId = null;
+    const channel = await client.channels.fetch(BOT_CHANNEL_ID);
+
+    if (reaction.emoji.name === '✅') {
+      const schedule = loadSchedule();
+      const post = schedule.posts.find(p => p.id === postId);
+      if (post) {
+        post.status = 'done';
+        saveSchedule(schedule);
+      }
+      await sendTodayDrafts();
+    } else if (reaction.emoji.name === '❌') {
+      await channel.send('⚠️ 前回が未了のため、本日分は送らずスケジュールをスライドします（時限投稿は固定）。');
+      await executeShift(channel);
+    }
+    return;
+  }
+
+  if (currentShiftPromptMessageId && reaction.message.id === currentShiftPromptMessageId) {
+    currentShiftPromptMessageId = null;
+    const channel = await client.channels.fetch(BOT_CHANNEL_ID);
+
+    if (reaction.emoji.name === '✅') {
+      await executeShift(channel);
+    } else if (reaction.emoji.name === '❌') {
+      await channel.send('このまま進めます。');
+    }
   }
 });
 
