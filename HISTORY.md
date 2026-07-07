@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-07-07 Fly.io → Oracle Cloud 移行手順書を作成
+
+**背景:** northeption-sns-botをFly.io（shared-1x-cpu@256MB）からOracle Cloud
+E2.1.Micro（AMD/1GB RAM、Always Free）へ移行するため。過去にfumotoppara-monitor
+用に作った手順書はARM/A1.Flex前提だったため、AMD/E2.1.Micro前提で作り直した。
+
+**判断:** ベアメタルNode.js+PM2を採用（Dockerは不使用）。Puppeteer/X API不使用で
+ネイティブ依存が薄く、E2.1.Microの1GB RAMではDockerデーモン常駐＋npm ci時の
+node-gypビルドでOOMになるリスクの方が大きいと判断。
+
+**設計上の注意点:** コードは`fs.existsSync('/data')`でFlyボリュームの有無を判定し
+永続化先を切り替える構造（schedule.json・Gmailトークン等）。Oracle側にも`/data`を
+用意しFlyの内容をコピーすることで、コード変更なしに同じ挙動を再現できる。
+また、同一Discordトークンを2箇所で同時稼働させると二重応答（3パターン文案が2回
+返る）が起きるため、並行稼働は「Fly側をscale count 0で待機させ即ロールバック可能に
+する」設計とし、実際のBot稼働は常にどちらか一方に限定する方針にした。
+
+**成果物:** `Oracle移行手順書.md`
+
+---
+
 ## 2026-06-23 投稿スケジュールの大幅スライド（2週間分の滞留を再配置）
 
 **症状:** 6/10予定の「選手紹介④双子の弟」以降、非時限の投稿が2週間（6/10〜6/22の5件）実施されないまま滞留していた。Botの`!shift`は`date >= today`のものしかシフト対象にできず、過去日付になった投稿は自力では救出できない構造だった。
