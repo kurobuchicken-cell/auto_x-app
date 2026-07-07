@@ -4,6 +4,42 @@
 
 ---
 
+## 2026-07-07 Oracle移行作業中にFly.io側の二重稼働が発覚・/data永続化データを移行
+
+**症状:** Oracle VM側でメール通知のデバッグ作業を進めている最中に、Fly.io側の
+`/data`ボリュームを確認したところ、本日7:00 JST時点のrun_lock・sent_ids.json・
+token_info.jsonが更新されており、**Fly側のBotも並行して稼働し続けていた**ことが
+判明した。移行手順書では「本番切替まではFlyを止めない」設計だったが、実際に
+Oracle側で動作確認を進める段階になっても明示的にFlyを止めておらず、結果として
+同一Discordトークン・同一メールアカウントに対して両環境が同時に処理を行う状態に
+なっていた（メールのSlack通知が二重送信された可能性がある）。
+
+**対応:**
+1. `flyctl scale count 0`でFly側マシンを停止（アプリ・ボリュームは保持）
+2. データ取得のため一時的に`scale count 1`で1分程度だけ再起動し、
+   `schedule.json`・`tokens/token_info.json`・`tokens/token_contact.json`・
+   `logs/sent_ids.json`を取得後、即座に`scale count 0`へ戻した
+   （本日分のrun_lockが既に存在したため、再起動してもメール二重送信は
+   発生しなかった）
+3. Oracle側に`/data`ディレクトリを新規作成し取得したデータを配置。これにより
+   コード内の`fs.existsSync('/data')`分岐でFlyと同じ永続化パスを使うようになり、
+   スケジュール状態・Gmailトークン・通知済みIDの継続性が確保された
+4. 作業中に`.env.save`という追跡外ファイルが`.gitignore`で除外されていない
+   ことも発覚したため、`.gitignore`に`.env.*`・`/logs/`・`/tokens/`を追加
+
+**教訓:**
+- 「本番切替までは並行稼働させない」という設計は、Fly側を明示的に止める
+  タイミングを手順として決めておかないと、テスト段階でなし崩し的に両方稼働する
+  状態になりやすい。次回以降は移行作業に着手する時点でまずFlyを止める運用にする。
+- `fly ssh sftp`はマシンが起動していないと使えない（`scale count 0`後は
+  ボリュームへアクセスできなくなる）。データ取得は停止前に済ませるか、
+  取得のためだけに一時的に再起動する必要がある。
+- Windows Git Bashから`flyctl ssh sftp get /data/...`を実行する際、MSYS的な
+  パス変換で`/data`が`C:/Program Files/Git/data`等に化けるため、
+  `MSYS_NO_PATHCONV=1`を付ける必要がある。
+
+---
+
 ## 2026-07-07 Oracle移行時にSLACK_WEBHOOK_URLの設定ミスでSlack通知が失敗
 
 **症状:** Oracle VMへ移行後、メールチェック機能はGmail取得・分類まで正常に動作したが、
