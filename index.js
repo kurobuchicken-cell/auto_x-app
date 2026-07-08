@@ -95,7 +95,7 @@ function getDateAfterDaysJST(days) {
 
 // ── 状態管理 ─────────────────────────────────────────────────
 
-// 3日前通知を送った投稿ID（返信を紐づけるため）
+// 事前ヒアリング通知を送った投稿ID（返信を紐づけるため）
 let currentPendingPostId = null;
 
 // シフト確認メッセージのID（リアクション待ち）
@@ -233,12 +233,16 @@ async function executeShift(channel) {
 
 // ── Cronジョブ ────────────────────────────────────────────────
 
-// 3日後通知の共通処理
-async function sendThreeDayNotifications() {
-  console.log('⏰ 3日前通知チェック開始');
+// 事前ヒアリングが必要な投稿（note欄あり）だけ3日前に通知
+async function sendHearingNotifications() {
+  console.log('⏰ 事前ヒアリング通知チェック開始');
   const schedule = loadSchedule();
   const threeDaysLater = getDateAfterDaysJST(3);
-  console.log(`📆 確認対象日: ${threeDaysLater}`);
+
+  const postsToNotify = schedule.posts.filter(
+    p => p.date === threeDaysLater && p.status === 'scheduled' && p.note
+  );
+  if (postsToNotify.length === 0) return;
 
   let channel;
   try {
@@ -248,56 +252,52 @@ async function sendThreeDayNotifications() {
     return;
   }
 
-  const postsToNotify = schedule.posts.filter(
-    p => p.date === threeDaysLater && p.status === 'scheduled'
-  );
-  console.log(`📌 通知対象: ${postsToNotify.length}件`);
-
   for (const post of postsToNotify) {
     try {
-      let msg =
+      const msg =
         `📅 **3日後の投稿予定** <@${MANAGER_ID}>\n\n` +
         `**日付：** ${post.date}\n` +
-        `**テーマ：** ${post.theme}\n\n`;
-
-      if (post.note) {
-        msg += `💬 **事前ヒアリング：** ${post.note}\n\n`;
-      }
-
-      msg +=
+        `**テーマ：** ${post.theme}\n\n` +
+        `💬 **事前ヒアリング：** ${post.note}\n\n` +
         `「GO」と書けばそのまま進めます。\n` +
-        `変更・追加情報があればそのまま書いてください。どちらも3パターンの文案を返します。`;
+        `ヒアリング結果や変更・追加情報があればそのまま書いてください。どちらも3パターンの文案を返します。`;
 
       await channel.send(msg);
       post.status = 'notified';
       currentPendingPostId = post.id;
-      console.log(`✅ 通知送信完了: ${post.id}`);
+      console.log(`✅ 事前ヒアリング通知送信完了: ${post.id}`);
     } catch (err) {
-      console.error(`通知送信エラー (${post.id}):`, err);
-    }
-  }
-
-  // カレンダー残量チェック（残り30日以下で警告）
-  const today = getTodayJST();
-  const remaining = schedule.posts.filter(p => p.date >= today && p.status !== 'done');
-  if (remaining.length > 0) {
-    const lastDate = remaining[remaining.length - 1].date;
-    const daysLeft = Math.floor(
-      (new Date(lastDate) - new Date(today)) / (1000 * 60 * 60 * 24)
-    );
-    if (daysLeft <= 30) {
-      try {
-        await channel.send(
-          `⚠️ <@${MANAGER_ID}> **投稿カレンダーの残りが約${daysLeft}日になりました。**\n` +
-          `次の半年分のスケジュールを作成してください。`
-        );
-      } catch (err) {
-        console.error('カレンダー残量警告送信エラー:', err);
-      }
+      console.error(`事前ヒアリング通知送信エラー (${post.id}):`, err);
     }
   }
 
   saveSchedule(schedule);
+}
+
+// カレンダー残量チェック（残り30日以下で警告）
+async function checkCalendarRemaining() {
+  console.log('⏰ カレンダー残量チェック開始');
+  const schedule = loadSchedule();
+  const today = getTodayJST();
+
+  const remaining = schedule.posts.filter(p => p.date >= today && p.status !== 'done');
+  if (remaining.length === 0) return;
+
+  const lastDate = remaining[remaining.length - 1].date;
+  const daysLeft = Math.floor(
+    (new Date(lastDate) - new Date(today)) / (1000 * 60 * 60 * 24)
+  );
+  if (daysLeft > 30) return;
+
+  try {
+    const channel = await client.channels.fetch(BOT_CHANNEL_ID);
+    await channel.send(
+      `⚠️ <@${MANAGER_ID}> **投稿カレンダーの残りが約${daysLeft}日になりました。**\n` +
+      `次の半年分のスケジュールを作成してください。`
+    );
+  } catch (err) {
+    console.error('カレンダー残量警告送信エラー:', err);
+  }
 }
 
 // 当日文案送信の共通処理
@@ -375,7 +375,8 @@ async function sendTodayDrafts() {
 
 // node-cronの代わりにsetIntervalで毎分チェック（Fly.io共有CPUでのmissed execution対策）
 let lastDraftDate = null;
-let lastNotifyDate = null;
+let lastHearingDate = null;
+let lastCalendarCheckDate = null;
 let lastMailCheckDate = null;
 
 setInterval(async () => {
@@ -390,10 +391,16 @@ setInterval(async () => {
     await sendTodayDrafts();
   }
 
-  // 9:00〜9:10 の間に1回だけ3日前通知
-  if (h === 9 && m < 10 && lastNotifyDate !== today) {
-    lastNotifyDate = today;
-    await sendThreeDayNotifications();
+  // 9:00〜9:10 の間に1回だけ事前ヒアリング通知（note欄がある投稿のみ）
+  if (h === 9 && m < 10 && lastHearingDate !== today) {
+    lastHearingDate = today;
+    await sendHearingNotifications();
+  }
+
+  // 9:00〜9:10 の間に1回だけカレンダー残量チェック
+  if (h === 9 && m < 10 && lastCalendarCheckDate !== today) {
+    lastCalendarCheckDate = today;
+    await checkCalendarRemaining();
   }
 
   // 9:00〜9:10 の間に1回だけメールチェック
@@ -415,8 +422,9 @@ client.on('ready', async () => {
     console.log('📋 schedule.json を Volume に初期化しました');
   }
 
-  // 起動時に currentPendingPostId を復元
   const schedule = loadSchedule();
+
+  // 起動時に currentPendingPostId を復元
   const notified = schedule.posts.filter(p => p.status === 'notified');
   if (notified.length > 0) {
     currentPendingPostId = notified[notified.length - 1].id;
@@ -457,7 +465,7 @@ client.on('messageCreate', async (message) => {
   // 管理コマンド
   if (text === '!notify') {
     await message.react('🔔');
-    await sendThreeDayNotifications();
+    await sendHearingNotifications();
     return;
   }
   if (text === '!draft') {
@@ -504,7 +512,7 @@ client.on('messageCreate', async (message) => {
 
   let content = text;
 
-  // 3日前通知への返信処理（GOまたは変更内容）
+  // 事前ヒアリング通知への返信処理（GOまたは変更内容）
   if (text.toUpperCase() === 'GO') {
     const schedule = loadSchedule();
     let post = null;

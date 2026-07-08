@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>NORTHEPTION 自動通知システム 仕様書</title>
+<style>
+  body { font-family: 'Noto Sans JP', 'Hiragino Kaku Gothic ProN', Arial, sans-serif; font-size: 11pt; color: #1a1a1a; margin: 0; padding: 0; line-height: 1.9; background: #fff; }
+  .cover { background: #111; color: #fff; padding: 60px 48px 48px; }
+  .cover h1 { font-size: 24pt; font-weight: bold; margin: 0 0 12px; letter-spacing: 0.05em; }
+  .cover .subtitle { font-size: 12pt; color: #aaa; margin: 0; }
+  .cover .meta { font-size: 9pt; color: #666; margin-top: 32px; }
+  .content { max-width: 860px; margin: 0 auto; padding: 40px 48px; }
+  h2 { font-size: 15pt; font-weight: bold; border-bottom: 2px solid #111; padding-bottom: 8px; margin-top: 56px; }
+  h3 { font-size: 12pt; font-weight: bold; margin-top: 32px; color: #333; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+  th { background-color: #111; color: #fff; padding: 10px 14px; text-align: left; font-size: 10pt; font-weight: normal; }
+  td { border: 1px solid #ddd; padding: 10px 14px; font-size: 10pt; vertical-align: top; }
+  tr:nth-child(even) td { background-color: #f9f9f9; }
+  .box { border: 1px solid #ddd; border-radius: 6px; padding: 20px 24px; margin: 20px 0; background: #fafafa; }
+  .box-yellow { background: #fffbea; border-left: 4px solid #f0c000; padding: 14px 20px; margin: 16px 0; border-radius: 0 6px 6px 0; }
+  .box-red { background: #fff4f4; border-left: 4px solid #cc0000; padding: 14px 20px; margin: 16px 0; border-radius: 0 6px 6px 0; }
+  .box-blue { background: #f0f6ff; border-left: 4px solid #3366cc; padding: 14px 20px; margin: 16px 0; border-radius: 0 6px 6px 0; }
+  .flow { background: #f9f9f9; border: 1px solid #ddd; border-radius: 6px; padding: 20px 24px; font-size: 10pt; line-height: 2.2; margin: 16px 0; }
+  .flow-step { display: flex; align-items: flex-start; margin: 10px 0; }
+  .step-num { background: #111; color: #fff; border-radius: 50%; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 10pt; font-weight: bold; flex-shrink: 0; margin-right: 14px; margin-top: 2px; }
+  .big-arrow { text-align: center; font-size: 18pt; color: #bbb; margin: 2px 0; }
+  pre { background-color: #f0f0f0; border: 1px solid #ccc; padding: 16px 20px; font-family: monospace; font-size: 10pt; white-space: pre-wrap; line-height: 1.7; border-radius: 4px; margin: 12px 0; }
+  .cmd { background: #f0f0f0; border: 1px solid #ddd; border-radius: 4px; padding: 2px 8px; font-family: monospace; font-size: 10pt; }
+  ul { padding-left: 22px; margin: 10px 0; }
+  li { margin: 6px 0; }
+  p { margin: 10px 0; }
+  hr { border: none; border-top: 1px solid #e0e0e0; margin: 40px 0; }
+  .section-label { display: inline-block; background: #111; color: #fff; font-size: 9pt; padding: 3px 10px; border-radius: 3px; margin-bottom: 12px; letter-spacing: 0.05em; }
+  .section-label.discord { background: #5865F2; }
+  .section-label.slack { background: #4A154B; }
+  @media print { .content { padding: 20px 32px; } }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <h1>NORTHEPTION<br>自動通知システム</h1>
+  <p class="subtitle">仕様書 — X投稿文案管理 ＋ メール日次レポート</p>
+  <p class="meta">作成：2026年6月10日　動作環境：Fly.io 東京リージョン</p>
+</div>
+
+<div class="content">
+
+<!-- ============================================================ -->
+<h2>1. システム概要</h2>
+
+<p>NORTHEPTIONの日常業務における2種類の通知を自動化するシステム。1つのサーバー（Fly.io）上で1プロセスとして稼働する。</p>
+
+<table>
+  <tr><th>通知</th><th>トリガー</th><th>処理内容</th><th>通知先</th></tr>
+  <tr>
+    <td><strong>X投稿文案の生成・スケジュール管理</strong></td>
+    <td>毎日8〜9時（JST）</td>
+    <td>投稿カレンダーに基づき文案3パターンを自動生成。</td>
+    <td>Discord</td>
+  </tr>
+  <tr>
+    <td><strong>Gmailの重要メール仕分け</strong></td>
+    <td>毎日9時（JST）</td>
+    <td>2アカウントのメールを自動分類してレポート送信。</td>
+    <td>Slack</td>
+  </tr>
+</table>
+
+<table>
+  <tr><th>項目</th><th>内容</th></tr>
+  <tr><td>動作環境</td><td>Fly.io 東京リージョン（nrt）、256MB・shared CPU、24時間稼働</td></tr>
+  <tr><td>アプリ名</td><td>northeption-sns-bot</td></tr>
+  <tr><td>言語</td><td>Node.js 18+</td></tr>
+  <tr><td>主要ライブラリ</td><td>discord.js v14、@anthropic-ai/sdk、Google Gmail API</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2>2. 動作スケジュール</h2>
+
+<p>毎分ポーリング（setInterval 60秒）でJST時刻をチェックし、該当時間帯に1日1回実行する。node-cronは使用しない（Fly.io共有CPUでのmissed execution対策）。</p>
+
+<table>
+  <tr><th>時刻（JST）</th><th>処理</th><th>通知先</th></tr>
+  <tr><td><strong>8:00〜8:09</strong></td><td>当日の投稿テーマでX文案3パターンを生成・送信（前回投稿の完了確認を含む）</td><td>Discord #sns-bot</td></tr>
+  <tr><td><strong>9:00〜9:09</strong></td><td>事前ヒアリングが必要な投稿（note欄あり）のみ3日前通知</td><td>Discord #sns-bot</td></tr>
+  <tr><td><strong>9:00〜9:09</strong></td><td>投稿カレンダー残量チェック（残り30日以下で警告）</td><td>Discord #sns-bot</td></tr>
+  <tr><td><strong>9:00〜9:09</strong></td><td>前日分（月曜は土〜日）のGmailを分類してレポート送信</td><td>Slack</td></tr>
+</table>
+
+<div class="box-blue">
+  <strong>起動時キャッチアップ：</strong>8時以降に起動した場合は当日文案を、9時以降はメールチェックを即時実行する。Fly.ioの再起動後でも通知が漏れない。
+</div>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2>3. 通知① X投稿文案生成</h2>
+<span class="section-label discord">Discord #sns-bot</span>
+
+<h3>3-1. 概要</h3>
+<p>schedule.json に登録された投稿スケジュールに基づき、当日の投稿テーマをClaude APIに渡してX投稿文案3パターンを生成し、Discordに送信する。担当者はDiscordからコピーしてXに手動投稿する。X APIは使用しない。最終判断は必ず担当者が行う。</p>
+
+<h3>3-2. 前回投稿確認フロー（毎日8時・当日文案生成の直前）</h3>
+
+<div class="flow">
+  <div class="flow-step"><div class="step-num">1</div><div>直近の非時限投稿で status ≠ done のものがあるか確認</div></div>
+  <div class="big-arrow">↓</div>
+  <div class="flow-step"><div class="step-num">2</div><div>あれば「前回の投稿は済んでいますか？」をDiscordに送信（✅/❌）。当日分の生成はここで一旦停止。</div></div>
+  <div class="big-arrow">↓</div>
+  <div class="flow-step"><div class="step-num">3a</div><div>✅ → 該当投稿を done にして当日文案生成へ進む</div></div>
+  <div class="flow-step"><div class="step-num">3b</div><div>❌ → 非時限投稿だけを1つ後ろ倒し（!shiftと同じ処理）、当日分はスキップ</div></div>
+  <div class="big-arrow">↓</div>
+  <div class="flow-step"><div class="step-num">4</div><div>未解決の間は毎日この確認を繰り返す</div></div>
+</div>
+
+<h3>3-3. 事前ヒアリング通知フロー（毎日9時・note欄がある投稿のみ）</h3>
+
+<div class="flow">
+  <div class="flow-step"><div class="step-num">1</div><div>schedule.json から「今日+3日」かつ status = scheduled かつ note が設定されている投稿を取得</div></div>
+  <div class="big-arrow">↓</div>
+  <div class="flow-step"><div class="step-num">2</div><div>テーマ・事前ヒアリング内容をDiscordに通知。status を notified に更新。</div></div>
+  <div class="big-arrow">↓</div>
+  <div class="flow-step"><div class="step-num">3</div><div>担当者が「GO」と返信 → テーマそのままで confirmedContent に保存<br>担当者が別テキストを返信 → その内容を confirmedContent に保存</div></div>
+  <div class="big-arrow">↓</div>
+  <div class="flow-step"><div class="step-num">4</div><div>どちらの場合もその場で文案3パターンを返す</div></div>
+</div>
+
+<div class="box-blue">note欄がない投稿は3日前通知を送らず、当日の前回投稿確認フローのみで処理される。</div>
+
+<h3>3-4. 当日文案生成フロー（毎日8時）</h3>
+
+<div class="flow">
+  <div class="flow-step"><div class="step-num">1</div><div>schedule.json から当日分（status ≠ drafts_sent / done）を取得</div></div>
+  <div class="big-arrow">↓</div>
+  <div class="flow-step"><div class="step-num">2</div><div>confirmedContent があればそれを使用、なければ theme を使用</div></div>
+  <div class="big-arrow">↓</div>
+  <div class="flow-step"><div class="step-num">3</div><div>Claude API（claude-opus-4-7）に3パターン生成を依頼</div></div>
+  <div class="big-arrow">↓</div>
+  <div class="flow-step"><div class="step-num">4</div><div>Discord に1パターンずつ3件に分けて送信（スマホコピー対応）</div></div>
+  <div class="big-arrow">↓</div>
+  <div class="flow-step"><div class="step-num">5</div><div>timeSensitive でなければシフト確認ボタン（✅/❌）を表示</div></div>
+  <div class="big-arrow">↓</div>
+  <div class="flow-step"><div class="step-num">6</div><div>schedule.json の status を drafts_sent に更新</div></div>
+</div>
+
+<div class="box-yellow"><strong>担当者が何を書いても必ず3パターンが返る。1対3を厳守。</strong></div>
+
+<h3>3-5. 投稿スケジュール管理（schedule.json）</h3>
+
+<p>Fly.io Volume（/data/schedule.json）で永続化。</p>
+
+<p><strong>投稿オブジェクトの構造</strong></p>
+<pre>{
+  "id": "2026-06-10",
+  "date": "2026-06-10",
+  "theme": "投稿テーマ",
+  "status": "scheduled",
+  "confirmedContent": null,
+  "note": "事前ヒアリング内容（省略可）",
+  "timeSensitive": true
+}</pre>
+
+<p><strong>status の遷移</strong></p>
+<pre>scheduled → notified → confirmed → drafts_sent → done</pre>
+<p>note欄がない投稿は notified / confirmed を経由せず scheduled → drafts_sent → done で完結する。</p>
+
+<p><strong>timeSensitive フラグ</strong>：true の投稿は !shift によるずらし対象から除外される（大会結果報告・誕生日など）。</p>
+<p><strong>カレンダー残量チェック</strong>：毎日9時に単独で実行。残り30日以下になるとDiscordに警告を自動送信する。</p>
+
+<h3>3-6. Discordコマンド一覧</h3>
+
+<p>チャンネル #sns-bot（ID: 1507312995041280070）のみ受け付ける。</p>
+
+<table>
+  <tr><th>コマンド</th><th>動作</th></tr>
+  <tr><td><span class="cmd">!draft</span></td><td>当日文案生成を手動実行</td></tr>
+  <tr><td><span class="cmd">!notify</span></td><td>事前ヒアリング通知（note欄あり）を手動実行</td></tr>
+  <tr><td><span class="cmd">!status</span></td><td>直近5件の予定と現在の待機IDを表示</td></tr>
+  <tr><td><span class="cmd">!shift</span></td><td>今日のテーマを次回以降に後ろ送り（timeSensitive除外）</td></tr>
+  <tr><td><span class="cmd">!reload</span></td><td>VolumeのscheduleをDockerイメージ最新版で上書き更新（既存ステータス保持）</td></tr>
+  <tr><td><span class="cmd">GO</span>（返信）</td><td>直近の通知済み投稿をテーマそのままで確定</td></tr>
+  <tr><td>その他テキスト</td><td>即時で文案3パターンを生成して返す</td></tr>
+</table>
+
+<h3>3-7. Claude API（文案生成）</h3>
+
+<table>
+  <tr><th>項目</th><th>内容</th></tr>
+  <tr><td>モデル</td><td>claude-opus-4-7</td></tr>
+  <tr><td>max_tokens</td><td>1024</td></tr>
+  <tr><td>プロンプトキャッシュ</td><td>cache_control: ephemeral（コスト削減）</td></tr>
+  <tr><td>出力形式</td><td>【パターン1：シンプル】 / 【パターン2：熱量高め】 / 【パターン3：ファン巻き込み】</td></tr>
+</table>
+
+<p>システムプロンプトに選手情報（5名・絵文字・Twitterハンドル）、投稿スタイル（#NthWIN #SF6必須・黄色いハート禁止・140字以内）、大会スケジュール・誕生日を定義済み。</p>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2>4. 通知② Gmailメールレポート</h2>
+<span class="section-label slack">Slack</span>
+
+<h3>4-1. 概要</h3>
+<p>info@northeption.com と contact@northeption.com の2アカウントを毎日9時にチェックし、重要メールを分類してSlackに日次レポートとして送信する。通知対象・未分類がともに0件の場合はSlackに送信しない。</p>
+
+<h3>4-2. 処理フロー（毎日9時）</h3>
+
+<div class="flow">
+  <div class="flow-step"><div class="step-num">1</div><div>Gmail API で対象期間のメールを2アカウント分取得</div></div>
+  <div class="big-arrow">↓</div>
+  <div class="flow-step"><div class="step-num">2</div><div>送信済みID（/data/logs/sent_ids.json）と照合して重複を除外</div></div>
+  <div class="big-arrow">↓</div>
+  <div class="flow-step"><div class="step-num">3</div><div>ルールベースで分類（ドメイン → キーワードの優先順）</div></div>
+  <div class="big-arrow">↓</div>
+  <div class="flow-step"><div class="step-num">4</div><div>ルールで分類できなかったメールをClaude API（claude-sonnet-4-6）で推測分類</div></div>
+  <div class="big-arrow">↓</div>
+  <div class="flow-step"><div class="step-num">5</div><div>通知対象（A/B/C/D/G'）または未分類（I）があればSlackにレポート送信</div></div>
+  <div class="big-arrow">↓</div>
+  <div class="flow-step"><div class="step-num">6</div><div>送信済みIDを記録・90日超のログを自動削除</div></div>
+</div>
+
+<h3>4-3. 対象期間</h3>
+
+<table>
+  <tr><th>曜日</th><th>対象期間</th></tr>
+  <tr><td>月曜</td><td>土曜〜日曜（2日分）</td></tr>
+  <tr><td>火〜日</td><td>前日（1日分）</td></tr>
+</table>
+
+<h3>4-4. メール分類カテゴリ</h3>
+
+<table>
+  <tr><th>カテゴリ</th><th>内容</th><th>Slack通知</th></tr>
+  <tr><td>🔴 A：請求書・決済</td><td>請求書、利用明細、Shopify決済など</td><td>✅ 通知</td></tr>
+  <tr><td>🟠 B：契約・法務</td><td>契約書、覚書、GMOサインなど</td><td>✅ 通知</td></tr>
+  <tr><td>🟢 C：採用・応募</td><td>求人応募、エントリー、採用関連</td><td>✅ 通知</td></tr>
+  <tr><td>🔵 D：案件・ビジネス提案</td><td>スポンサー、取材、協賛、提案</td><td>✅ 通知</td></tr>
+  <tr><td>🟡 G'：決済通知（MF）</td><td>MoneyForwardの決済完了通知</td><td>✅ 通知</td></tr>
+  <tr><td>⚪ I：未分類（要確認）</td><td>ルールで分類できなかったメール。Claude推測ラベルを付与。</td><td>✅ 通知</td></tr>
+  <tr><td>⬜ E：ゲームPR・インディー</td><td>ゲームPR会社からのメール</td><td>スキップ</td></tr>
+  <tr><td>⬜ F：SNS通知</td><td>Instagram、Facebookなどの通知メール</td><td>スキップ</td></tr>
+  <tr><td>⬜ G：SaaS通知</td><td>各種SaaSサービスからの自動通知</td><td>スキップ</td></tr>
+  <tr><td>⬜ H：営業・メルマガ</td><td>営業メール、メルマガ、配信停止案内</td><td>スキップ</td></tr>
+</table>
+
+<h3>4-5. 分類ロジック（優先順）</h3>
+
+<table>
+  <tr><th>優先順</th><th>判定内容</th></tr>
+  <tr><td>1</td><td>config.json の skipDomains に含まれるドメイン → H扱い（スキップ）</td></tr>
+  <tr><td>2</td><td>config.json の notifyDomains に含まれるドメイン → 指定カテゴリ</td></tr>
+  <tr><td>3</td><td>config.json の notifyKeywords に含まれるキーワード（件名マッチ） → 指定カテゴリ</td></tr>
+  <tr><td>4</td><td>組み込みドメインルール（shopify.com → A、cloudsign.jp → A/B、moneyforward.com → G'/G など）</td></tr>
+  <tr><td>5</td><td>組み込みキーワードルール（件名に「請求書」「合意締結」「スポンサー」など）</td></tr>
+  <tr><td>6</td><td>上記すべて該当なし → Claude API で推測し、I（未分類）として通知</td></tr>
+</table>
+
+<h3>4-6. ルールの動的追加</h3>
+
+<p>services/mail/config.json を編集するだけでルールを追加・変更できる（デプロイ不要）。</p>
+
+<pre>{
+  "skipDomains": ["example-pr.com"],
+  "notifyDomains": { "partner.com": "D_案件・ビジネス提案" },
+  "notifyKeywords": { "スポンサー契約": "B_契約・法務" }
+}</pre>
+
+<h3>4-7. Slackメッセージ形式</h3>
+
+<pre>📬 メール日次レポート｜2026/06/10(水)　対象: 6/9(火)
+━━━━━━━━━━━━━━━━━━
+🔴 請求書・決済 (1件)
+• [INFO] Shopify — 利用明細 📎
+
+🟢 採用・応募 (2件)
+• [CONTACT] 田中太郎 — タレントマネージャー募集の件
+• [CONTACT] 株式会社XX — グラフィックデザイナー応募の件
+
+━━━━━━━━━━━━━━━━━━
+@ユーザー 通知対象: 3件 ／ 未分類: 0件 ／ 受信総数: 12件 ／ スキップ: 9件</pre>
+
+<p>Slack送信失敗時は最大3回リトライする。通知対象・未分類がともに0件の場合は送信しない。</p>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2>5. 環境変数</h2>
+
+<p>値はFly.io Secretsにのみ保存。.envファイルは空欄で運用する。</p>
+
+<table>
+  <tr><th>変数名</th><th>用途</th></tr>
+  <tr><td>DISCORD_BOT_TOKEN</td><td>DiscordボットのBotトークン</td></tr>
+  <tr><td>DISCORD_BOT_CHANNEL_ID</td><td>操作チャンネルID（1507312995041280070）</td></tr>
+  <tr><td>DISCORD_MANAGER_ID</td><td>担当者のDiscordユーザーID</td></tr>
+  <tr><td>ANTHROPIC_API_KEY</td><td>Claude APIキー（文案生成・メール分類で共用）</td></tr>
+  <tr><td>GMAIL_CLIENT_ID</td><td>Google OAuth2 クライアントID</td></tr>
+  <tr><td>GMAIL_CLIENT_SECRET</td><td>Google OAuth2 クライアントシークレット</td></tr>
+  <tr><td>GMAIL_INFO_TOKEN</td><td>info@northeption.com のOAuthトークン（JSON文字列）</td></tr>
+  <tr><td>GMAIL_CONTACT_TOKEN</td><td>contact@northeption.com のOAuthトークン（JSON文字列）</td></tr>
+  <tr><td>SLACK_WEBHOOK_URL</td><td>Slack Incoming Webhook URL</td></tr>
+  <tr><td>SLACK_MENTION_USER_ID</td><td>Slackメンション先ユーザーID（省略可）</td></tr>
+</table>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2>6. データ永続化（Fly.io Volume）</h2>
+
+<p>Fly.io Volume（volume名: schedule_data、マウント先: /data）を3用途で共有する。</p>
+
+<table>
+  <tr><th>パス</th><th>内容</th></tr>
+  <tr><td>/data/schedule.json</td><td>X投稿スケジュール（ステータス管理）</td></tr>
+  <tr><td>/data/tokens/</td><td>Gmail OAuthトークンファイル</td></tr>
+  <tr><td>/data/logs/sent_ids.json</td><td>送信済みメールID（90日保持）</td></tr>
+  <tr><td>/data/logs/run_log.json</td><td>メールチェック実行ログ（最新200件）</td></tr>
+  <tr><td>/data/logs/classification_YYYY-MM-DD.json</td><td>日別分類ログ（90日保持・自動削除）</td></tr>
+</table>
+
+<div class="box-yellow">Volume未使用時はリポジトリ同梱の schedule.json をフォールバックとして使用する（デプロイのたびにステータスがリセットされる）。</div>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2>7. ファイル構成</h2>
+
+<pre>auto_x-app/
+├── index.js                        # メインプロセス（タイマー・Discord Bot）
+├── schedule.json                   # 投稿スケジュール（Volumeのフォールバック）
+├── package.json
+├── fly.toml                        # Fly.io設定（256MB・shared CPU・nrtリージョン）
+├── Dockerfile
+├── services/
+│   └── mail/
+│       ├── run.js                  # メールチェックのエントリーポイント
+│       ├── config.json             # 動的ルール設定（skipDomains等）
+│       ├── auth/gmail-auth.js      # Gmail OAuth2トークン管理
+│       ├── classify/classifier.js  # ルールベース＋Claude分類エンジン
+│       ├── gmail/fetch.js          # Gmail APIメール取得
+│       ├── logger/logger.js        # 送信済みID管理・ログ保存
+│       ├── notify/slack.js         # Slack Incoming Webhook送信
+│       └── utils/date.js           # JST日付範囲計算
+└── setup-secrets.js                # Fly.io secrets登録スクリプト（初回のみ）</pre>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2>8. 運用メモ・注意事項</h2>
+
+<div class="box-red">
+  <strong>セキュリティ</strong>
+  <ul style="margin-top:8px;">
+    <li>APIキー・トークンはチャットに絶対書かない（Anthropicが自動検出してキーが無効化される）</li>
+    <li>.env ファイルはGitにコミットしない</li>
+    <li>Botは必ず1つだけ起動すること。複数起動すると重複通知が発生する</li>
+  </ul>
+</div>
+
+<h3>カレンダー更新手順</h3>
+<pre># schedule.json を編集・コミット後にデプロイ
+flyctl deploy --remote-only
+
+# デプロイ完了後、VolumeのJSONをイメージ版で更新
+# → Discord #sns-bot に送信
+!reload</pre>
+
+<h3>Gmail OAuthトークンの再認証が必要になった場合</h3>
+<p>トークンの有効期限が切れた場合は、ローカルの mail_check-app で再認証する。</p>
+<pre># info@northeption.com
+npm run auth:info
+
+# contact@northeption.com
+npm run auth:contact</pre>
+<p>生成されたトークンを GMAIL_INFO_TOKEN / GMAIL_CONTACT_TOKEN として Fly.io に再設定する。</p>
+
+<hr>
+<p style="font-size:9pt; color:#999; text-align:center;">NORTHEPTION 自動通知システム 仕様書　2026年6月</p>
+
+</div>
+</body>
+</html>
