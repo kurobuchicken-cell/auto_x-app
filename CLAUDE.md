@@ -39,7 +39,7 @@ NORTHEPTIONのX（Twitter）投稿を半自動化するDiscord Bot。
 ### 禁止事項
 - .env・secrets・credentials・token等の機密ファイルを読まない・出力しない
 - *.pem・id_rsa・*.p12等の鍵・証明書ファイルも読まない・出力しない
-- `rm -rf` `curl 外部URL` `cat .env` は実行前に必ず確認を求める
+- `rm -rf` `curl 外部URL（localhostを除く）` `cat .env` は実行前に必ず確認を求める
 - ホームディレクトリ（~/）への直接アクセス禁止
 - パスワード・APIキーをチャットに出力しない
 - 不明な外部URLへのアクセス・データ送信処理を勝手に実装しない
