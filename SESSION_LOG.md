@@ -17,3 +17,10 @@
   - `C:\Users\kin\.claude\CLAUDE.md`
   - `c:\dev\auto_x-app\CLAUDE.md`
   - `C:\dev\dev-config\CLAUDE.md`、`sync-pull.ps1`、`sync-push.ps1`、`envs\auto_x-app\.env`
+
+## auto_x-app-mail-ma-01（2026-07-13）
+- 作業環境：ノートPC
+- やったこと：メール集計機能に、MA案件紹介メール（shinpei_kashiyama@f4samurai.jp宛）をClaudeで抽出しChatWorkへ通知する新パイプラインを追加。Gmail OAuth・ChatWork API連携のセットアップと実データでのE2E動作確認まで実施
+- 完了した状態：`services/mail/ma/`配下に抽出・通知パイプライン実装済み。ローカルの`.env`にGMAIL_CLIENT_ID/SECRET・CHATWORK_API_TOKEN/ROOM_ID・ANTHROPIC_API_KEY設定済み、`tokens/token_kashiyama.json`取得済み（dev-config経由で同期済み）。実受信ボックス全件（約35通）でテスト実行し、実際にMA案件紹介メール1件を正しく検出しChatWork通知済み。匿名の複数案件ダイジェストメール（BATONZ新着案件紹介等）は意図的に除外する設計と確認済み。コード変更はコミット・push済み（b4a11a1）
+- 残課題・次にやること：本番Oracle VM（ubuntu@141.147.175.174）への反映が未実施。①`tokens/token_kashiyama.json`をVMの`/data/tokens/`へscp　②VM側`.env`に`CHATWORK_API_TOKEN`・`CHATWORK_ROOM_ID`を追記　③VM側で`git pull && npm ci --omit=dev && pm2 restart northeption-bot`　④`pm2 logs`で疎通確認。なお今回のノートPCにはOracle VMへのSSH秘密鍵が無く接続不可だったため、本番反映は鍵のあるPCで行うか鍵を用意する必要あり
+- 触ったファイル：`services/mail/ma/run.js`・`services/mail/ma/extract.js`・`services/mail/notify/chatwork.js`・`services/mail/auth/get-token.js`・`services/mail/gmail/fetch.js`・`services/mail/logger/logger.js`・`index.js`・`.env.example`・`HISTORY.md`
