@@ -71,7 +71,8 @@ function parseMessage(msg, account, accountEmail) {
   const subject = getHeader('Subject') || '(件名なし)';
   const date = getHeader('Date');
   const hasAttachment = checkAttachments(msg.payload);
-  const body = extractBody(msg.payload).slice(0, 150);
+  const fullBody = extractBody(msg.payload);
+  const body = fullBody.slice(0, 150);
   const domain = extractDomain(from);
   const senderName = extractSenderName(from);
 
@@ -84,6 +85,7 @@ function parseMessage(msg, account, accountEmail) {
     domain,
     subject,
     body,
+    fullBody,
     hasAttachment,
     gmailLink: `https://mail.google.com/mail/?authuser=${accountEmail}#all/${msg.id}`,
   };
@@ -155,4 +157,4 @@ async function fetchAllEmails(startDate, endDate) {
   return emails;
 }
 
-module.exports = { fetchAllEmails, extractDomain };
+module.exports = { fetchAllEmails, fetchEmails, extractDomain };

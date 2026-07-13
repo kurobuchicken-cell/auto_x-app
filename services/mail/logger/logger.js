@@ -74,10 +74,11 @@ function saveRunLog(entry) {
 
 // 当日（JST）の実行ロックを取得する。既に取得済みなら false を返す。
 // O_EXCL フラグでアトミックな排他作成（再起動・競合時の2重送信を防止）
-function acquireRunLock() {
+// name でパイプラインごとにロックを分離する（例: 'mail' と 'ma' は互いに影響しない）
+function acquireRunLock(name = 'mail') {
   ensureLogDir();
   const today = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const lockFile = path.join(LOG_DIR, `run_lock_${today}.json`);
+  const lockFile = path.join(LOG_DIR, `run_lock_${name}_${today}.json`);
   try {
     const fd = fs.openSync(lockFile, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY);
     fs.writeSync(fd, JSON.stringify({ timestamp: new Date().toISOString() }));
@@ -97,8 +98,8 @@ function cleanupOldLogs() {
 
   for (const file of fs.readdirSync(LOG_DIR)) {
     if (file.startsWith('classification_') || file.startsWith('run_lock_')) {
-      const dateStr = file.replace(/^(classification_|run_lock_)/, '').replace('.json', '');
-      if (new Date(dateStr) < cutoff) {
+      const dateMatch = file.match(/(\d{4}-\d{2}-\d{2})\.json$/);
+      if (dateMatch && new Date(dateMatch[1]) < cutoff) {
         fs.unlinkSync(path.join(LOG_DIR, file));
       }
     }
