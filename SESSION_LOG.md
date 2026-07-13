@@ -45,3 +45,9 @@
 ### 追記4（同日・セッション終了処理）
 - 復旧したSSH鍵（`tokens/oracle_vm_key`）をdev-configのsync-list対象に追加し、`sync-push.ps1`でプライベートリポジトリへpush済み。次回以降はどのPCでも`sync-pull.ps1`で自動配置される
 - 本セッションでの変更はすべてコミット・push済み、dev-config同期も完了。未コミット・未pushの変更なし
+
+### 追記5（同日・追加対応：Fly Deploy削除、前回未了時の文案再送）
+- 大量に届いていたFly Deploy失敗通知メールの原因を特定（`.github/workflows/fly-deploy.yml`がFly.io運用終了後も残存）。ワークフローファイルを削除しコミット・push・本番反映済み
+- 「当日の3文案が届かない」という問い合わせに対応。原因は前回投稿未了時の既存の意図的な仕様（前回done確認まで当日分を止める）だったが、❌選択時に元テーマの文案が再送されない点を改善要望として受け、`messageReactionAdd`の❌ハンドラに文案再送処理を追加。スライド処理自体は変更なし
+- 上記2件ともHISTORY.md記録・コミット・push・Oracle VM本番反映（`git pull && pm2 restart northeption-sns-bot`）まで完了、起動ログでクラッシュなし確認済み
+- 未コミット・未push・未同期の変更なし
