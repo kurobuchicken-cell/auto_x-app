@@ -34,3 +34,10 @@
 - Run Commandは10分以上待っても「Accepted」のまま進まず（Last updatedもCreatedと同一のまま）。Oracle Cloud Agentがコマンドを拾えていないと判断
 - OCI ConsoleのUI上（Actions内、More actions内、Details/Security/Networking各タブ、グローバルハンバーガーメニューのCompute配下）を一通り探したが「Console Connections」の作成導線が見つからなかった
 - 次回はOCI CLI（`oci compute instance-console-connection create`）での作成を試すか、IAMポリシー（instance-console-connectionリソースへのアクセス権）が不足していないか確認する
+
+### 追記3（同日・Oracle VM本番反映完了）
+- ダウンロードフォルダに残っていた`ssh-key-2026-07-07.key`（インスタンス作成時の鍵）でSSH接続に成功。Run Command・Console Connectionの調査は不要になった
+- `tokens/token_kashiyama.json`をVMの`/data/tokens/`へscp、VM側`.env`に`CHATWORK_API_TOKEN`・`CHATWORK_ROOM_ID`を追記（値は非表示のままパイプ経由で転送）
+- VM側でpackage.json/package-lock.jsonに未コミットの変更（googleapis手動アップグレードの残骸）が残っており`git pull`がコンフリクト→ユーザー確認の上`git checkout`で破棄してpull（過去のコミット漏れ分もまとめて反映され、b3a7e5b→f4c62d4まで一気に最新化）
+- `npm ci --omit=dev`実行、`pm2 restart northeption-sns-bot`（pm2上のプロセス名は`northeption-sns-bot`であり`northeption-bot`ではなかった点に注意）
+- 再起動後ログで、起動時キャッチアップにより`[kashiyama]`アカウントのメール取得→MA判定が実際にエラーなく完走することを確認。本番反映完了
