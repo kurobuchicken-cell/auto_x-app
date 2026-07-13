@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-07-13 Oracle VMのSSHアクセス喪失からの復旧と、判明した設定ミス
+
+**背景:** MA案件紹介メール機能をOracle VMへデプロイしようとしたところ、ノートPC・家PCどちらにもSSH秘密鍵が無く接続できなかった（`Oracle移行手順書.md`には「SSH接続確認済み」とあるが、鍵の保管場所がどこにも記録されていなかった）。
+
+**復旧方法:** Oracle Cloud ConsoleのRun Command機能・Instance Console Connectionの両方を試したが、Run Commandはエージェントがコマンドを拾わず「Accepted」のまま進行せず、Console ConnectionはUI上に作成導線を発見できなかった（いずれも時間切れで断念）。最終的に、インスタンス作成日（2026-07-07）と同日にダウンロードフォルダへ保存されていた`ssh-key-2026-07-07.key`（OCIがインスタンス作成時に自動生成・ダウンロードさせた鍵）が有効であることが判明し、これで接続できた。
+
+**教訓:** OCIでインスタンス作成時に「鍵を自動生成」を選ぶと、ブラウザのダウンロードフォルダに`ssh-key-<日付>.key`という名前で保存される。この鍵をダウンロードフォルダに置きっぱなしにせず、`~/.ssh/`等の分かりやすい場所に移動し、`dev-config`のsync-list対象に加えておくべきだった。次にOracle VMの鍵を紛失した場合は、まずインスタンス作成日に近い日付のダウンロードフォルダを確認するとよい。
+
+**デプロイ時に判明した設定ミス:**
+- プロジェクトCLAUDE.mdに「本番稼働：`pm2 start index.js --name northeption-bot`」と記載されていたが、実際にVM上で稼働しているpm2プロセス名は`northeption-sns-bot`だった（ハイフンの位置違い）。誤った名前で`pm2 restart`すると「Process or Namespace not found」で失敗する。CLAUDE.md側を実際の名前に修正した。
+- VM側の`package.json`に、コミット済みの`googleapis: ^140.0.1`とは異なる`^173.0.0`への未コミットの変更が残っていた（過去のトラブル対応で誰かが直接`npm install`した形跡）。`git pull`がこれとコンフリクトしたため、ユーザー確認の上でVM側の変更を破棄し、コミット済みのpackage-lock.jsonで`npm ci`し直した。あわせて、2026-07-08にコミットした「過去のコミット漏れ」分（Dockerfile・README.md・package-lock.json本体など）もこのタイミングまでVMに一度もpullされておらず、まとめて反映された。
+
+---
+
 ## 2026-07-13 CLAUDE.md／.envのPC間同期を「dev-config」リポジトリ経由の自動化に変更
 
 **背景:** これまでノートPC・家PC間のグローバルCLAUDE.mdと各プロジェクトの`.env`は手動コピーで同期しており、コピー忘れによる設定のズレが起きやすかった。加えて、グローバルCLAUDE.md（`~/.claude/CLAUDE.md`）が実は自分のOneDriveへのシンボリックリンクになっていたことが判明（CLAUDE.md本文の「OneDrive経由のシンボリックリンクは使わない」というルールと矛盾した状態で放置されていた）。ユーザーはこれを機にOneDriveの使用自体をやめる方針にした。
