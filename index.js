@@ -596,6 +596,14 @@ client.on('messageReactionAdd', async (reaction, user) => {
       await sendTodayDrafts();
     } else if (reaction.emoji.name === '❌') {
       await channel.send('⚠️ 前回が未了のため、本日分は送らずスケジュールをスライドします（時限投稿は固定）。');
+
+      const schedule = loadSchedule();
+      const prevPost = schedule.posts.find(p => p.id === postId);
+      if (prevPost) {
+        const content = prevPost.confirmedContent || prevPost.theme;
+        await sendDraftsToChannel(content, `📝 **未投稿分「${content}」の文案を再送します**`);
+      }
+
       await executeShift(channel);
     }
     return;
