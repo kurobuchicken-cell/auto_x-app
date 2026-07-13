@@ -29,3 +29,8 @@
 - SSH秘密鍵はノートPC・家PCどちらにも無いことが判明（家PCでもOracle作業をしたことがない、とのこと）。ノートPCで新規鍵ペアを生成済み（`~/.ssh/oracle_vm`・`~/.ssh/oracle_vm.pub`、公開鍵は非機密）
 - Oracle Cloud ConsoleのRun Command機能で公開鍵を`authorized_keys`に追加しようと試みたが、数分待っても実行ステータスが「Accepted」のまま進まず失敗（Oracle Cloud Agentがコマンドを拾えていない可能性。プラグイン一覧にRun Command関連の項目が見当たらなかった）
 - 次回はInstance Console Connection（シリアルコンソール経由でGRUB編集→レスキュー起動→authorized_keysに鍵追加）を試す想定。本番Bot再起動を伴うためデバッグ用に別セッションで実施すること
+
+### 追記2（同日・Console Connection調査）
+- Run Commandは10分以上待っても「Accepted」のまま進まず（Last updatedもCreatedと同一のまま）。Oracle Cloud Agentがコマンドを拾えていないと判断
+- OCI ConsoleのUI上（Actions内、More actions内、Details/Security/Networking各タブ、グローバルハンバーガーメニューのCompute配下）を一通り探したが「Console Connections」の作成導線が見つからなかった
+- 次回はOCI CLI（`oci compute instance-console-connection create`）での作成を試すか、IAMポリシー（instance-console-connectionリソースへのアクセス権）が不足していないか確認する
