@@ -24,3 +24,8 @@
 - 完了した状態：`services/mail/ma/`配下に抽出・通知パイプライン実装済み。ローカルの`.env`にGMAIL_CLIENT_ID/SECRET・CHATWORK_API_TOKEN/ROOM_ID・ANTHROPIC_API_KEY設定済み、`tokens/token_kashiyama.json`取得済み（dev-config経由で同期済み）。実受信ボックス全件（約35通）でテスト実行し、実際にMA案件紹介メール1件を正しく検出しChatWork通知済み。匿名の複数案件ダイジェストメール（BATONZ新着案件紹介等）は意図的に除外する設計と確認済み。コード変更はコミット・push済み（b4a11a1）
 - 残課題・次にやること：本番Oracle VM（ubuntu@141.147.175.174）への反映が未実施。①`tokens/token_kashiyama.json`をVMの`/data/tokens/`へscp　②VM側`.env`に`CHATWORK_API_TOKEN`・`CHATWORK_ROOM_ID`を追記　③VM側で`git pull && npm ci --omit=dev && pm2 restart northeption-bot`　④`pm2 logs`で疎通確認。なお今回のノートPCにはOracle VMへのSSH秘密鍵が無く接続不可だったため、本番反映は鍵のあるPCで行うか鍵を用意する必要あり
 - 触ったファイル：`services/mail/ma/run.js`・`services/mail/ma/extract.js`・`services/mail/notify/chatwork.js`・`services/mail/auth/get-token.js`・`services/mail/gmail/fetch.js`・`services/mail/logger/logger.js`・`index.js`・`.env.example`・`HISTORY.md`
+
+### 追記（同日・Oracle VMアクセス復旧の試行）
+- SSH秘密鍵はノートPC・家PCどちらにも無いことが判明（家PCでもOracle作業をしたことがない、とのこと）。ノートPCで新規鍵ペアを生成済み（`~/.ssh/oracle_vm`・`~/.ssh/oracle_vm.pub`、公開鍵は非機密）
+- Oracle Cloud ConsoleのRun Command機能で公開鍵を`authorized_keys`に追加しようと試みたが、数分待っても実行ステータスが「Accepted」のまま進まず失敗（Oracle Cloud Agentがコマンドを拾えていない可能性。プラグイン一覧にRun Command関連の項目が見当たらなかった）
+- 次回はInstance Console Connection（シリアルコンソール経由でGRUB編集→レスキュー起動→authorized_keysに鍵追加）を試す想定。本番Bot再起動を伴うためデバッグ用に別セッションで実施すること
