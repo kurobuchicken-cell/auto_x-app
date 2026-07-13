@@ -41,3 +41,7 @@
 - VM側でpackage.json/package-lock.jsonに未コミットの変更（googleapis手動アップグレードの残骸）が残っており`git pull`がコンフリクト→ユーザー確認の上`git checkout`で破棄してpull（過去のコミット漏れ分もまとめて反映され、b3a7e5b→f4c62d4まで一気に最新化）
 - `npm ci --omit=dev`実行、`pm2 restart northeption-sns-bot`（pm2上のプロセス名は`northeption-sns-bot`であり`northeption-bot`ではなかった点に注意）
 - 再起動後ログで、起動時キャッチアップにより`[kashiyama]`アカウントのメール取得→MA判定が実際にエラーなく完走することを確認。本番反映完了
+
+### 追記4（同日・セッション終了処理）
+- 復旧したSSH鍵（`tokens/oracle_vm_key`）をdev-configのsync-list対象に追加し、`sync-push.ps1`でプライベートリポジトリへpush済み。次回以降はどのPCでも`sync-pull.ps1`で自動配置される
+- 本セッションでの変更はすべてコミット・push済み、dev-config同期も完了。未コミット・未pushの変更なし
