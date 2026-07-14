@@ -51,3 +51,18 @@
 - 「当日の3文案が届かない」という問い合わせに対応。原因は前回投稿未了時の既存の意図的な仕様（前回done確認まで当日分を止める）だったが、❌選択時に元テーマの文案が再送されない点を改善要望として受け、`messageReactionAdd`の❌ハンドラに文案再送処理を追加。スライド処理自体は変更なし
 - 上記2件ともHISTORY.md記録・コミット・push・Oracle VM本番反映（`git pull && pm2 restart northeption-sns-bot`）まで完了、起動ログでクラッシュなし確認済み
 - 未コミット・未push・未同期の変更なし
+
+## auto_x-app-macp-01（2026-07-14）
+- 作業環境：ノートPC
+- やったこと：
+  - 「ChatWork通知が来ない」問い合わせの原因調査（Oracle VMにSSHしpm2 logs確認）→ 該当メール0件が原因のバグではない正常動作と判明
+  - MA案件メールチェックに「該当なし」通知を追加（従来は0件だと沈黙）
+  - ma-cp.com（M&Aキャピタルパートナーズ）の案件一覧を自動収集しChatWork通知する新機能`services/mail/macp/`を追加。利用規約確認の結果、複製・配布・営利目的の禁止条項に抵触しうると判断し、`MACP_SCRAPE_ENABLED=true`を明示設定しない限り一切動作しないスイッチ付きで実装
+- 完了した状態：
+  - コード変更はコミット・push・Oracle VM本番反映済み（`git pull && npm ci --omit=dev && pm2 restart northeption-sns-bot`、起動ログでクラッシュなし確認済み）
+  - VM側`.env`に`CHATWORK_MACP_ROOM_ID`を設定済み（既存の`CHATWORK_ROOM_ID`と同じ値を流用、値は非表示のままVM上のシェル内で転記）
+  - `MACP_SCRAPE_ENABLED`は意図的にOFFのまま。ユーザーからの指示があるまでON にしない
+- 残課題・次にやること：
+  - 社内許可が下りたら、VM側`.env`の`MACP_SCRAPE_ENABLED`を`true`に変更し`pm2 restart northeption-sns-bot`。**現在9時(JST)以降に再起動すると起動時キャッチアップで即座に初回全件（516件・7〜9分かけて連続送信）が走る**ため、実行タイミングに注意（朝9時前の再起動なら当日9:00の定時チェックで初回実行される）
+  - 初回全件送信を試したことはまだ無いので、実際にONにした際にChatWork送信が想定通り進むか（レート制限に引っかからないか等）は本番で要観察
+- 触ったファイル：`services/mail/ma/run.js`・`services/mail/macp/scrape.js`・`services/mail/macp/format.js`・`services/mail/macp/run.js`・`services/mail/logger/logger.js`・`index.js`・`.env.example`・`HISTORY.md`・VM側`.env`（git管理外）
