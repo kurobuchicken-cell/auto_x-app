@@ -8,6 +8,7 @@ const LOG_DIR = process.env.LOG_DIR ||
 
 const SENT_IDS_FILE = path.join(LOG_DIR, 'sent_ids.json');
 const RUN_LOG_FILE = path.join(LOG_DIR, 'run_log.json');
+const MACP_SEEN_IDS_FILE = path.join(LOG_DIR, 'macp_seen_ids.json');
 const RETENTION_DAYS = 90;
 
 function ensureLogDir() {
@@ -40,6 +41,22 @@ function markAsSent(messageIds) {
     sentIds[id] = now;
   }
   saveSentIds(sentIds);
+}
+
+// macp案件の既知IDを読み込む。ファイルが無ければ初回実行とみなしnullを返す
+// （sent_ids.jsonと違い90日で失効させない。案件掲載が90日を超えて続くと再通知になってしまうため）
+function loadMacpSeenIds() {
+  ensureLogDir();
+  try {
+    return JSON.parse(fs.readFileSync(MACP_SEEN_IDS_FILE, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function saveMacpSeenIds(seenIds) {
+  ensureLogDir();
+  fs.writeFileSync(MACP_SEEN_IDS_FILE, JSON.stringify(seenIds, null, 2));
 }
 
 function saveClassificationLog(dateStr, results) {
@@ -117,4 +134,13 @@ function cleanupOldLogs() {
   if (changed) saveSentIds(sentIds);
 }
 
-module.exports = { isAlreadySent, markAsSent, saveClassificationLog, saveRunLog, cleanupOldLogs, acquireRunLock };
+module.exports = {
+  isAlreadySent,
+  markAsSent,
+  saveClassificationLog,
+  saveRunLog,
+  cleanupOldLogs,
+  acquireRunLock,
+  loadMacpSeenIds,
+  saveMacpSeenIds,
+};

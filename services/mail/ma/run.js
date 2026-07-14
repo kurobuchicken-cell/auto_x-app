@@ -4,7 +4,7 @@ const { fetchEmails } = require('../gmail/fetch');
 const { extractMaDeal } = require('./extract');
 const { sendToChatwork } = require('../notify/chatwork');
 const { isAlreadySent, markAsSent, saveRunLog, acquireRunLock } = require('../logger/logger');
-const { getDateRange } = require('../utils/date');
+const { getDateRange, formatShortDate } = require('../utils/date');
 
 const ACCOUNT = 'kashiyama';
 const DIVIDER = '-'.repeat(30);
@@ -111,6 +111,16 @@ async function runMaDealCheck() {
     }
 
     if (processedIds.length > 0) markAsSent(processedIds);
+
+    if (runLog.matched === 0) {
+      const dateLabel = formatShortDate(startDate);
+      await sendToChatwork(
+        process.env.CHATWORK_API_TOKEN,
+        process.env.CHATWORK_ROOM_ID,
+        `📭 MA案件紹介メール\n${dateLabel} 対象：該当するメールはありませんでした`
+      );
+      console.log('[MA] 該当なし通知を送信');
+    }
   } catch (err) {
     console.error('[MA] メールチェックエラー:', err);
     runLog.error = err.message;
