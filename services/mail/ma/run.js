@@ -1,13 +1,18 @@
 'use strict';
 
 const { fetchEmails } = require('../gmail/fetch');
-const { extractMaDeal } = require('./extract');
+const { extractMaDeals } = require('./extract');
 const { sendToChatwork } = require('../notify/chatwork');
 const { isAlreadySent, markAsSent, saveRunLog, acquireRunLock } = require('../logger/logger');
 const { getDateRange, formatShortDate } = require('../utils/date');
 
 const ACCOUNT = 'kashiyama';
 const DIVIDER = '-'.repeat(30);
+const SEND_INTERVAL_MS = 800;
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 function orNone(value) {
   return value || '記載なし';
@@ -97,12 +102,13 @@ async function runMaDealCheck() {
 
     for (const email of newEmails) {
       try {
-        const deal = await extractMaDeal(email);
-        if (deal) {
+        const deals = await extractMaDeals(email);
+        for (const deal of deals) {
           const message = formatMaMessage(deal, email);
           await sendToChatwork(process.env.CHATWORK_API_TOKEN, process.env.CHATWORK_ROOM_ID, message);
           runLog.matched += 1;
-          console.log(`[MA] ChatWork送信完了: ${email.id}`);
+          console.log(`[MA] ChatWork送信完了: ${email.id} (${runLog.matched}件目)`);
+          await sleep(SEND_INTERVAL_MS);
         }
         processedIds.push(email.id);
       } catch (err) {
