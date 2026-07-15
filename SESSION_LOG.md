@@ -66,3 +66,19 @@
   - 社内許可が下りたら、VM側`.env`の`MACP_SCRAPE_ENABLED`を`true`に変更し`pm2 restart northeption-sns-bot`。**現在9時(JST)以降に再起動すると起動時キャッチアップで即座に初回全件（516件・7〜9分かけて連続送信）が走る**ため、実行タイミングに注意（朝9時前の再起動なら当日9:00の定時チェックで初回実行される）
   - 初回全件送信を試したことはまだ無いので、実際にONにした際にChatWork送信が想定通り進むか（レート制限に引っかからないか等）は本番で要観察
 - 触ったファイル：`services/mail/ma/run.js`・`services/mail/macp/scrape.js`・`services/mail/macp/format.js`・`services/mail/macp/run.js`・`services/mail/logger/logger.js`・`index.js`・`.env.example`・`HISTORY.md`・VM側`.env`（git管理外）
+
+## auto_x-app-mail-mabugfix-01（2026-07-15）
+- 作業環境：ノートPC
+- やったこと：
+  - dev配下の全プロジェクトの終了処理（未コミット変更の棚卸し・コミット・push・dev-config sync-push）を実施
+  - 「今日もChatWork通知が来ない」問い合わせを受けOracle VMのpm2ログを調査。07-14に追加した「該当なし」通知が、`services/mail/utils/date.js`の`formatShortDate`が`module.exports`から漏れていたため常にTypeErrorで失敗し、ChatWork送信自体がスキップされていたことが判明（`error.log`にのみ記録されており`out.log`だけでは気づけなかった）
+  - `module.exports`に`formatShortDate`を追加して修正。本番反映後、本日分の実行ロックを手動削除し`runMaDealCheck`を再実行して07-15分の「該当なし」通知を送信済み
+  - ユーザーから「1通のメールに複数の具体的な案件が書かれていることも想定される」と指摘を受け、従来の1メール1案件（`isMaDeal`単一JSON）設計だと複数案件のうち一部が`markAsSent`で静かに欠落する欠陥を発見。`extract.js`を`deals`配列を返す設計に変更し、`run.js`側も複数案件を個別にChatWork送信（送信間隔800ms）するよう改修
+- 完了した状態：
+  - dev配下5リポジトリ（PDCA_diary-app・claude-code-textbook・kakeibo-app・auto_apo-app・mail-check-app）の終了処理完了、dev-config sync-push実行済み（変更なし）
+  - `formatShortDate`export漏れ修正・複数案件対応、いずれもコミット・push・Oracle VM本番反映済み（`git pull && pm2 restart northeption-sns-bot`、再起動後クラッシュなし確認済み）
+  - 複数案件対応は、ローカルの`ANTHROPIC_API_KEY`が無効だったためVM上の有効なキーで合成テスト（複数案件メール→2件正しく個別抽出／BATONZ風ダイジェストメール→0件で除外）を実施してから本番反映
+- 残課題・次にやること：
+  - auto_shortmovie-appの`.git`が破損（`fatal: bad object HEAD`、オブジェクト欠損）。ユーザー判断で今回は対応見送り。次回対応する場合は要相談
+  - 複数案件対応は本番の実データではまだ「本当に複数案件が来た日」で動作確認できていない。次回複数案件メールが来た際にChatWork側の見え方（案件ごとに別メッセージで届くか等）を確認するとよい
+- 触ったファイル：`services/mail/utils/date.js`・`services/mail/ma/run.js`・`services/mail/ma/extract.js`・`HISTORY.md`（auto_x-app）、`PDCA_diary-app/docs/spec.html`（削除）、`claude-code-textbook/package-lock.json`、`kakeibo-app/package-lock.json`、`auto_apo-app`の実例サンプル2件、`mail-check-app/src/`配下4ファイル・`merge-guide.md`・要件定義書html
