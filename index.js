@@ -84,6 +84,12 @@ function saveSchedule(schedule) {
   fs.writeFileSync(SCHEDULE_FILE, JSON.stringify(schedule, null, 2), 'utf8');
 }
 
+// 'done'（実際に投稿確認済み）と'skipped'（未投稿のままシフトで見送られた）を
+// どちらも「対応不要」として扱うための判定
+function isResolved(post) {
+  return post.status === 'done' || post.status === 'skipped';
+}
+
 function getTodayJST() {
   const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
   return jst.toISOString().split('T')[0];
@@ -209,7 +215,7 @@ async function executeShift(channel) {
   const schedule = loadSchedule();
   const today = getTodayJST();
   const shiftable = schedule.posts
-    .filter(p => p.date >= today && p.status !== 'done' && p.timeSensitive !== true)
+    .filter(p => p.date >= today && !isResolved(p) && p.timeSensitive !== true)
     .sort((a, b) => a.date.localeCompare(b.date));
 
   if (shiftable.length < 2) {
@@ -224,13 +230,17 @@ async function executeShift(channel) {
     shiftable[i].status = 'scheduled';
   }
 
-  shiftable[0].status = 'done';
-  shiftable[0].confirmedContent = null;
+  // 'done'は「実際にX投稿済み」の意味で使うため、未投稿のまま見送った枠は
+  // 'skipped'として区別する（!statusコマンドで見送り内容が可視化される）
+  const skipped = shiftable[0];
+  skipped.status = 'skipped';
+  skipped.confirmedContent = null;
 
   saveSchedule(schedule);
+  console.log(`⏭️ スキップ: ${skipped.date} 「${skipped.theme}」`);
 
   const preview = shiftable.slice(1, 4).map(p => `・${p.date}：${p.theme}`).join('\n');
-  await channel.send(`✅ コンテンツを1つずらしました（時限投稿は固定）。\n\n次の3件：\n${preview}`);
+  await channel.send(`✅ コンテンツを1つずらしました（時限投稿は固定）。\n⏭️ 見送った内容：「${skipped.theme}」（${skipped.date}）\n\n次の3件：\n${preview}`);
 }
 
 // ── Cronジョブ ────────────────────────────────────────────────
@@ -282,7 +292,7 @@ async function checkCalendarRemaining() {
   const schedule = loadSchedule();
   const today = getTodayJST();
 
-  const remaining = schedule.posts.filter(p => p.date >= today && p.status !== 'done');
+  const remaining = schedule.posts.filter(p => p.date >= today && !isResolved(p));
   if (remaining.length === 0) return;
 
   const lastDate = remaining[remaining.length - 1].date;
@@ -317,7 +327,7 @@ async function sendTodayDrafts() {
 
   // 前回の非時限投稿が完了しているか確認（時限投稿は遡る対象から除外）
   const prevPost = schedule.posts
-    .filter(p => p.date < today && p.timeSensitive !== true && p.status !== 'done')
+    .filter(p => p.date < today && p.timeSensitive !== true && !isResolved(p))
     .sort((a, b) => b.date.localeCompare(a.date))[0];
 
   if (prevPost) {
@@ -337,7 +347,7 @@ async function sendTodayDrafts() {
   }
 
   const todaysPosts = schedule.posts.filter(
-    p => p.date === today && p.status !== 'drafts_sent' && p.status !== 'done'
+    p => p.date === today && p.status !== 'drafts_sent' && !isResolved(p)
   );
   console.log(`📌 本日の文案生成対象: ${todaysPosts.length}件`);
 
@@ -452,7 +462,7 @@ client.on('ready', async () => {
   if (jstHour >= 8) {
     const today = getTodayJST();
     const missed = schedule.posts.filter(
-      p => p.date === today && p.status !== 'drafts_sent' && p.status !== 'done'
+      p => p.date === today && p.status !== 'drafts_sent' && !isResolved(p)
     );
     if (missed.length > 0) {
       console.log(`🔄 起動時キャッチアップ：本日の未送信文案を送信`);
