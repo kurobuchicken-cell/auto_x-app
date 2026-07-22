@@ -82,3 +82,20 @@
   - auto_shortmovie-appの`.git`が破損（`fatal: bad object HEAD`、オブジェクト欠損）。ユーザー判断で今回は対応見送り。次回対応する場合は要相談
   - 複数案件対応は本番の実データではまだ「本当に複数案件が来た日」で動作確認できていない。次回複数案件メールが来た際にChatWork側の見え方（案件ごとに別メッセージで届くか等）を確認するとよい
 - 触ったファイル：`services/mail/utils/date.js`・`services/mail/ma/run.js`・`services/mail/ma/extract.js`・`HISTORY.md`（auto_x-app）、`PDCA_diary-app/docs/spec.html`（削除）、`claude-code-textbook/package-lock.json`、`kakeibo-app/package-lock.json`、`auto_apo-app`の実例サンプル2件、`mail-check-app/src/`配下4ファイル・`merge-guide.md`・要件定義書html
+
+## auto_x-app-schedulebugfix-01（2026-07-22）
+- 作業環境：ノートPC
+- やったこと：
+  - 「Xの係るDiscord通知、正常に動いてる？」という質問を受けOracle VMのpm2ログ・稼働状況を調査。プロセス自体は正常稼働、メール/MA案件チェックも正常完了しているように見えたが、「本日の文案生成対象：0件」が続いていた点を深掘り
+  - ユーザーから「明日サトルの誕生日だよ？」との指摘を受け、本番の`/data/schedule.json`（Fly.io Volume永続化パスの名残、Oracle移行後も同じ仕組みを踏襲）とGit管理の`schedule.json`を突き合わせたところ、77件中64件（83%）が本来の日付からズレていることが判明
+  - 原因は`executeShift`（前回投稿未了で❌を押すと自動発動する「スケジュールを1つずらす」処理）が、見送った投稿を検証なしに`status: 'done'`にしてしまう設計だったこと。繰り返し実行された結果、7/6予定のテーマが7/8〜7/24まで7回連続でカスケードし、本来7/22固定の時限投稿「🎂サトル19歳（7/23誕生日）」はid「2026-08-12」まで押し出され`timeSensitive`フラグごと消失していた（8月中旬に「明日7/23誕生日」という誤った文言で投稿される事故になりかねない状態）。まだ来ていない7/24も誤って`done`扱いになっていた
+  - 本番復旧：`/data/schedule.json`をバックアップ後、本日以降の全件をGit管理の正しい内容（テーマ・note・timeSensitive）に復元しステータスを`scheduled`にリセット（7/22より前はズレていても実害がないためそのまま）
+  - 根本原因の修正：`executeShift`の見送り分ステータスを`done`から新設の`skipped`に分離し、`isResolved(post)`ヘルパーで`done`/`skipped`を統一的に「対応不要」として扱うよう5箇所を修正。実行時にログとDiscord通知で見送り内容を明示するよう変更
+- 完了した状態：
+  - 本番`/data/schedule.json`修正済み（バックアップ：`/data/schedule.json.bak_20260722_192502`）、コード修正はコミット・push・Oracle VM本番反映（`git pull && pm2 restart northeption-sns-bot`）済み
+  - 再起動時の起動時キャッチアップで7/22分（サトル誕生日ネタ）を正しく1件検出し、3パターンの文案をDiscordのsns-botチャンネルへ送信済み。ユーザーが受信確認済み
+  - HISTORY.mdに経緯を記録済み
+- 残課題・次にやること：
+  - 今回の修正は「7/22以降を正しい内容にリセット」のみ。7/22より前のズレた実データ（7/6〜7/24あたり）が実際にXへ投稿されたかどうかは検証していない（過去のことなので今回は対応不要と判断）
+  - `skipped`ステータス導入により、今後`!status`コマンドで`[skipped]`表示された投稿は「本当に見送ってよかったか」を管理者が都度確認する運用が望ましい
+- 触ったファイル：`index.js`・`HISTORY.md`・`SESSION_LOG.md`、VM側`/data/schedule.json`（git管理外・直接修正）
