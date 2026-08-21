@@ -104,5 +104,10 @@
 - 作業環境：家PC
 - やったこと：MA案件紹介メール通知機能（Gmail取得→Claude判定→ChatWork通知）の呼び出しをindex.jsから削除して停止
 - 完了した状態：index.jsからrunMaDealCheckのrequire・毎日9時cron呼び出し・起動時キャッチアップ呼び出し・lastMaCheckDate変数を削除済み。node --checkと実起動でモジュール読み込みエラーがないことを確認済み（Discordログイン手前のトークンエラーは今回の変更と無関係な環境要因）。services/mail/ma/run.js・extract.js・services/mail/notify/chatwork.jsのファイル自体、.envのCHATWORK設定は変更せず残置（復活させる場合はindex.jsに4箇所書き戻すだけでよい）。並行して他PC（ノートPC）で追加されたma-cp.com自動収集機能（macp、デフォルトOFF）とはコンフリクトしたが、macpは今回の対象外のためrequire・cron呼び出しとも残す形でマージ解消した
-- 残課題・次にやること：本番Oracle VM（ubuntu@141.147.175.174）へのgit pull・pm2 restartが未実施。次回本番反映時に対応する
+- 残課題・次にやること：なし
 - 触ったファイル：index.js、HISTORY.md、SESSION_LOG.md
+
+### 追記（同日・本番Oracle VM反映完了）
+- `ssh -i tokens/oracle_vm_key ubuntu@141.147.175.174`で接続し、`~/apps/northeption-sns-bot`で`git pull`（b3ac55a→75c45a7、fast-forward）・`npm ci --omit=dev`・`pm2 restart northeption-sns-bot`を実行
+- 再起動後24秒経過してもクラッシュなし・`online`で安定していることを`pm2 jlist`で確認。VM側index.jsに`runMaDealCheck`/`lastMaCheckDate`の参照が残っていないこと、構文エラーがないことも確認済み
+- これで本番でもMA案件紹介メールのChatWork通知は届かなくなった。残課題なし
