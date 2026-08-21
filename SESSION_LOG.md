@@ -24,3 +24,10 @@
 - 完了した状態：`services/mail/ma/`配下に抽出・通知パイプライン実装済み。ローカルの`.env`にGMAIL_CLIENT_ID/SECRET・CHATWORK_API_TOKEN/ROOM_ID・ANTHROPIC_API_KEY設定済み、`tokens/token_kashiyama.json`取得済み（dev-config経由で同期済み）。実受信ボックス全件（約35通）でテスト実行し、実際にMA案件紹介メール1件を正しく検出しChatWork通知済み。匿名の複数案件ダイジェストメール（BATONZ新着案件紹介等）は意図的に除外する設計と確認済み。コード変更はコミット・push済み（b4a11a1）
 - 残課題・次にやること：本番Oracle VM（ubuntu@141.147.175.174）への反映が未実施。①`tokens/token_kashiyama.json`をVMの`/data/tokens/`へscp　②VM側`.env`に`CHATWORK_API_TOKEN`・`CHATWORK_ROOM_ID`を追記　③VM側で`git pull && npm ci --omit=dev && pm2 restart northeption-bot`　④`pm2 logs`で疎通確認。なお今回のノートPCにはOracle VMへのSSH秘密鍵が無く接続不可だったため、本番反映は鍵のあるPCで行うか鍵を用意する必要あり
 - 触ったファイル：`services/mail/ma/run.js`・`services/mail/ma/extract.js`・`services/mail/notify/chatwork.js`・`services/mail/auth/get-token.js`・`services/mail/gmail/fetch.js`・`services/mail/logger/logger.js`・`index.js`・`.env.example`・`HISTORY.md`
+
+## northeption-sns-bot-madeal-disable-01（2026-08-21）
+- 作業環境：家PC
+- やったこと：MA案件紹介メール通知機能（Gmail取得→Claude判定→ChatWork通知）の呼び出しをindex.jsから削除して停止
+- 完了した状態：index.jsからrunMaDealCheckのrequire・毎日9時cron呼び出し・起動時キャッチアップ呼び出し・lastMaCheckDate変数を削除済み。node --checkと実起動でモジュール読み込みエラーがないことを確認済み（Discordログイン手前のトークンエラーは今回の変更と無関係な環境要因）。services/mail/ma/run.js・extract.js・services/mail/notify/chatwork.jsのファイル自体、.envのCHATWORK設定は変更せず残置（復活させる場合はindex.jsに4箇所書き戻すだけでよい）
+- 残課題・次にやること：本番Oracle VM（ubuntu@141.147.175.174）へのgit pull・pm2 restartが未実施。次回本番反映時に対応する
+- 触ったファイル：index.js、HISTORY.md、SESSION_LOG.md

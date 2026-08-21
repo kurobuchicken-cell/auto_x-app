@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-08-21 MA案件紹介メール機能（ChatWork通知）を停止
+
+**背景:** [メール集計機能にMA案件紹介メールの抽出・ChatWork通知を追加](#2026-07-10-メール集計機能にma案件紹介メールの抽出chatwork通知を追加)（2026-07-10）で導入した機能だが、案件自体が不要になったため廃止したいとの要望があった。
+
+**判断:** 完全削除（`services/mail/ma/`・`services/mail/notify/chatwork.js`のファイル削除）と、呼び出しだけ止めてファイルは残す「停止のみ」の2案を提示。オラクルVM（1 OCPU/1GB RAMのAlways Freeインスタンス）のリソース圧迫と、`extract.js`がメール1通ごとにClaude APIをフル本文（最大12,000文字）で呼び出しており無関係なメールでも判定コストがかかっていた点をユーザーが懸念していたため、その解消が目的だった。両案とも動作上の効果（リソース・トークン消費ゼロ）は同じで、違いは復旧のしやすさだけと説明した上で「停止のみ」を選択。
+
+**対応:** `index.js`から以下を削除。
+- `require('./services/mail/ma/run')`
+- `lastMaCheckDate`変数
+- 毎日9:00〜9:10のcron呼び出しブロック
+- 起動時キャッチアップの呼び出しブロック
+
+`services/mail/ma/run.js`・`extract.js`・`services/mail/notify/chatwork.js`のファイル自体、`.env`のCHATWORK_API_TOKEN/ROOM_IDは変更していない。再度有効化する場合はindex.jsに上記4箇所を書き戻せばよい。本番Oracle VMへの反映（`git pull && pm2 restart`）は未実施（次回反映時に対応）。
+
+---
+
 ## 2026-07-13 CLAUDE.md／.envのPC間同期を「dev-config」リポジトリ経由の自動化に変更
 
 **背景:** これまでノートPC・家PC間のグローバルCLAUDE.mdと各プロジェクトの`.env`は手動コピーで同期しており、コピー忘れによる設定のズレが起きやすかった。加えて、グローバルCLAUDE.md（`~/.claude/CLAUDE.md`）が実は自分のOneDriveへのシンボリックリンクになっていたことが判明（CLAUDE.md本文の「OneDrive経由のシンボリックリンクは使わない」というルールと矛盾した状態で放置されていた）。ユーザーはこれを機にOneDriveの使用自体をやめる方針にした。
