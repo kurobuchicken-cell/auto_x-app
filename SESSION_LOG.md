@@ -25,9 +25,84 @@
 - 残課題・次にやること：本番Oracle VM（ubuntu@141.147.175.174）への反映が未実施。①`tokens/token_kashiyama.json`をVMの`/data/tokens/`へscp　②VM側`.env`に`CHATWORK_API_TOKEN`・`CHATWORK_ROOM_ID`を追記　③VM側で`git pull && npm ci --omit=dev && pm2 restart northeption-bot`　④`pm2 logs`で疎通確認。なお今回のノートPCにはOracle VMへのSSH秘密鍵が無く接続不可だったため、本番反映は鍵のあるPCで行うか鍵を用意する必要あり
 - 触ったファイル：`services/mail/ma/run.js`・`services/mail/ma/extract.js`・`services/mail/notify/chatwork.js`・`services/mail/auth/get-token.js`・`services/mail/gmail/fetch.js`・`services/mail/logger/logger.js`・`index.js`・`.env.example`・`HISTORY.md`
 
+### 追記（同日・Oracle VMアクセス復旧の試行）
+- SSH秘密鍵はノートPC・家PCどちらにも無いことが判明（家PCでもOracle作業をしたことがない、とのこと）。ノートPCで新規鍵ペアを生成済み（`~/.ssh/oracle_vm`・`~/.ssh/oracle_vm.pub`、公開鍵は非機密）
+- Oracle Cloud ConsoleのRun Command機能で公開鍵を`authorized_keys`に追加しようと試みたが、数分待っても実行ステータスが「Accepted」のまま進まず失敗（Oracle Cloud Agentがコマンドを拾えていない可能性。プラグイン一覧にRun Command関連の項目が見当たらなかった）
+- 次回はInstance Console Connection（シリアルコンソール経由でGRUB編集→レスキュー起動→authorized_keysに鍵追加）を試す想定。本番Bot再起動を伴うためデバッグ用に別セッションで実施すること
+
+### 追記2（同日・Console Connection調査）
+- Run Commandは10分以上待っても「Accepted」のまま進まず（Last updatedもCreatedと同一のまま）。Oracle Cloud Agentがコマンドを拾えていないと判断
+- OCI ConsoleのUI上（Actions内、More actions内、Details/Security/Networking各タブ、グローバルハンバーガーメニューのCompute配下）を一通り探したが「Console Connections」の作成導線が見つからなかった
+- 次回はOCI CLI（`oci compute instance-console-connection create`）での作成を試すか、IAMポリシー（instance-console-connectionリソースへのアクセス権）が不足していないか確認する
+
+### 追記3（同日・Oracle VM本番反映完了）
+- ダウンロードフォルダに残っていた`ssh-key-2026-07-07.key`（インスタンス作成時の鍵）でSSH接続に成功。Run Command・Console Connectionの調査は不要になった
+- `tokens/token_kashiyama.json`をVMの`/data/tokens/`へscp、VM側`.env`に`CHATWORK_API_TOKEN`・`CHATWORK_ROOM_ID`を追記（値は非表示のままパイプ経由で転送）
+- VM側でpackage.json/package-lock.jsonに未コミットの変更（googleapis手動アップグレードの残骸）が残っており`git pull`がコンフリクト→ユーザー確認の上`git checkout`で破棄してpull（過去のコミット漏れ分もまとめて反映され、b3a7e5b→f4c62d4まで一気に最新化）
+- `npm ci --omit=dev`実行、`pm2 restart northeption-sns-bot`（pm2上のプロセス名は`northeption-sns-bot`であり`northeption-bot`ではなかった点に注意）
+- 再起動後ログで、起動時キャッチアップにより`[kashiyama]`アカウントのメール取得→MA判定が実際にエラーなく完走することを確認。本番反映完了
+
+### 追記4（同日・セッション終了処理）
+- 復旧したSSH鍵（`tokens/oracle_vm_key`）をdev-configのsync-list対象に追加し、`sync-push.ps1`でプライベートリポジトリへpush済み。次回以降はどのPCでも`sync-pull.ps1`で自動配置される
+- 本セッションでの変更はすべてコミット・push済み、dev-config同期も完了。未コミット・未pushの変更なし
+
+### 追記5（同日・追加対応：Fly Deploy削除、前回未了時の文案再送）
+- 大量に届いていたFly Deploy失敗通知メールの原因を特定（`.github/workflows/fly-deploy.yml`がFly.io運用終了後も残存）。ワークフローファイルを削除しコミット・push・本番反映済み
+- 「当日の3文案が届かない」という問い合わせに対応。原因は前回投稿未了時の既存の意図的な仕様（前回done確認まで当日分を止める）だったが、❌選択時に元テーマの文案が再送されない点を改善要望として受け、`messageReactionAdd`の❌ハンドラに文案再送処理を追加。スライド処理自体は変更なし
+- 上記2件ともHISTORY.md記録・コミット・push・Oracle VM本番反映（`git pull && pm2 restart northeption-sns-bot`）まで完了、起動ログでクラッシュなし確認済み
+- 未コミット・未push・未同期の変更なし
+
+## auto_x-app-macp-01（2026-07-14）
+- 作業環境：ノートPC
+- やったこと：
+  - 「ChatWork通知が来ない」問い合わせの原因調査（Oracle VMにSSHしpm2 logs確認）→ 該当メール0件が原因のバグではない正常動作と判明
+  - MA案件メールチェックに「該当なし」通知を追加（従来は0件だと沈黙）
+  - ma-cp.com（M&Aキャピタルパートナーズ）の案件一覧を自動収集しChatWork通知する新機能`services/mail/macp/`を追加。利用規約確認の結果、複製・配布・営利目的の禁止条項に抵触しうると判断し、`MACP_SCRAPE_ENABLED=true`を明示設定しない限り一切動作しないスイッチ付きで実装
+- 完了した状態：
+  - コード変更はコミット・push・Oracle VM本番反映済み（`git pull && npm ci --omit=dev && pm2 restart northeption-sns-bot`、起動ログでクラッシュなし確認済み）
+  - VM側`.env`に`CHATWORK_MACP_ROOM_ID`を設定済み（既存の`CHATWORK_ROOM_ID`と同じ値を流用、値は非表示のままVM上のシェル内で転記）
+  - `MACP_SCRAPE_ENABLED`は意図的にOFFのまま。ユーザーからの指示があるまでON にしない
+- 残課題・次にやること：
+  - 社内許可が下りたら、VM側`.env`の`MACP_SCRAPE_ENABLED`を`true`に変更し`pm2 restart northeption-sns-bot`。**現在9時(JST)以降に再起動すると起動時キャッチアップで即座に初回全件（516件・7〜9分かけて連続送信）が走る**ため、実行タイミングに注意（朝9時前の再起動なら当日9:00の定時チェックで初回実行される）
+  - 初回全件送信を試したことはまだ無いので、実際にONにした際にChatWork送信が想定通り進むか（レート制限に引っかからないか等）は本番で要観察
+- 触ったファイル：`services/mail/ma/run.js`・`services/mail/macp/scrape.js`・`services/mail/macp/format.js`・`services/mail/macp/run.js`・`services/mail/logger/logger.js`・`index.js`・`.env.example`・`HISTORY.md`・VM側`.env`（git管理外）
+
+## auto_x-app-mail-mabugfix-01（2026-07-15）
+- 作業環境：ノートPC
+- やったこと：
+  - dev配下の全プロジェクトの終了処理（未コミット変更の棚卸し・コミット・push・dev-config sync-push）を実施
+  - 「今日もChatWork通知が来ない」問い合わせを受けOracle VMのpm2ログを調査。07-14に追加した「該当なし」通知が、`services/mail/utils/date.js`の`formatShortDate`が`module.exports`から漏れていたため常にTypeErrorで失敗し、ChatWork送信自体がスキップされていたことが判明（`error.log`にのみ記録されており`out.log`だけでは気づけなかった）
+  - `module.exports`に`formatShortDate`を追加して修正。本番反映後、本日分の実行ロックを手動削除し`runMaDealCheck`を再実行して07-15分の「該当なし」通知を送信済み
+  - ユーザーから「1通のメールに複数の具体的な案件が書かれていることも想定される」と指摘を受け、従来の1メール1案件（`isMaDeal`単一JSON）設計だと複数案件のうち一部が`markAsSent`で静かに欠落する欠陥を発見。`extract.js`を`deals`配列を返す設計に変更し、`run.js`側も複数案件を個別にChatWork送信（送信間隔800ms）するよう改修
+- 完了した状態：
+  - dev配下5リポジトリ（PDCA_diary-app・claude-code-textbook・kakeibo-app・auto_apo-app・mail-check-app）の終了処理完了、dev-config sync-push実行済み（変更なし）
+  - `formatShortDate`export漏れ修正・複数案件対応、いずれもコミット・push・Oracle VM本番反映済み（`git pull && pm2 restart northeption-sns-bot`、再起動後クラッシュなし確認済み）
+  - 複数案件対応は、ローカルの`ANTHROPIC_API_KEY`が無効だったためVM上の有効なキーで合成テスト（複数案件メール→2件正しく個別抽出／BATONZ風ダイジェストメール→0件で除外）を実施してから本番反映
+- 残課題・次にやること：
+  - auto_shortmovie-appの`.git`が破損（`fatal: bad object HEAD`、オブジェクト欠損）。ユーザー判断で今回は対応見送り。次回対応する場合は要相談
+  - 複数案件対応は本番の実データではまだ「本当に複数案件が来た日」で動作確認できていない。次回複数案件メールが来た際にChatWork側の見え方（案件ごとに別メッセージで届くか等）を確認するとよい
+- 触ったファイル：`services/mail/utils/date.js`・`services/mail/ma/run.js`・`services/mail/ma/extract.js`・`HISTORY.md`（auto_x-app）、`PDCA_diary-app/docs/spec.html`（削除）、`claude-code-textbook/package-lock.json`、`kakeibo-app/package-lock.json`、`auto_apo-app`の実例サンプル2件、`mail-check-app/src/`配下4ファイル・`merge-guide.md`・要件定義書html
+
+## auto_x-app-schedulebugfix-01（2026-07-22）
+- 作業環境：ノートPC
+- やったこと：
+  - 「Xの係るDiscord通知、正常に動いてる？」という質問を受けOracle VMのpm2ログ・稼働状況を調査。プロセス自体は正常稼働、メール/MA案件チェックも正常完了しているように見えたが、「本日の文案生成対象：0件」が続いていた点を深掘り
+  - ユーザーから「明日サトルの誕生日だよ？」との指摘を受け、本番の`/data/schedule.json`（Fly.io Volume永続化パスの名残、Oracle移行後も同じ仕組みを踏襲）とGit管理の`schedule.json`を突き合わせたところ、77件中64件（83%）が本来の日付からズレていることが判明
+  - 原因は`executeShift`（前回投稿未了で❌を押すと自動発動する「スケジュールを1つずらす」処理）が、見送った投稿を検証なしに`status: 'done'`にしてしまう設計だったこと。繰り返し実行された結果、7/6予定のテーマが7/8〜7/24まで7回連続でカスケードし、本来7/22固定の時限投稿「🎂サトル19歳（7/23誕生日）」はid「2026-08-12」まで押し出され`timeSensitive`フラグごと消失していた（8月中旬に「明日7/23誕生日」という誤った文言で投稿される事故になりかねない状態）。まだ来ていない7/24も誤って`done`扱いになっていた
+  - 本番復旧：`/data/schedule.json`をバックアップ後、本日以降の全件をGit管理の正しい内容（テーマ・note・timeSensitive）に復元しステータスを`scheduled`にリセット（7/22より前はズレていても実害がないためそのまま）
+  - 根本原因の修正：`executeShift`の見送り分ステータスを`done`から新設の`skipped`に分離し、`isResolved(post)`ヘルパーで`done`/`skipped`を統一的に「対応不要」として扱うよう5箇所を修正。実行時にログとDiscord通知で見送り内容を明示するよう変更
+- 完了した状態：
+  - 本番`/data/schedule.json`修正済み（バックアップ：`/data/schedule.json.bak_20260722_192502`）、コード修正はコミット・push・Oracle VM本番反映（`git pull && pm2 restart northeption-sns-bot`）済み
+  - 再起動時の起動時キャッチアップで7/22分（サトル誕生日ネタ）を正しく1件検出し、3パターンの文案をDiscordのsns-botチャンネルへ送信済み。ユーザーが受信確認済み
+  - HISTORY.mdに経緯を記録済み
+- 残課題・次にやること：
+  - 今回の修正は「7/22以降を正しい内容にリセット」のみ。7/22より前のズレた実データ（7/6〜7/24あたり）が実際にXへ投稿されたかどうかは検証していない（過去のことなので今回は対応不要と判断）
+  - `skipped`ステータス導入により、今後`!status`コマンドで`[skipped]`表示された投稿は「本当に見送ってよかったか」を管理者が都度確認する運用が望ましい
+- 触ったファイル：`index.js`・`HISTORY.md`・`SESSION_LOG.md`、VM側`/data/schedule.json`（git管理外・直接修正）
+
 ## northeption-sns-bot-madeal-disable-01（2026-08-21）
 - 作業環境：家PC
 - やったこと：MA案件紹介メール通知機能（Gmail取得→Claude判定→ChatWork通知）の呼び出しをindex.jsから削除して停止
-- 完了した状態：index.jsからrunMaDealCheckのrequire・毎日9時cron呼び出し・起動時キャッチアップ呼び出し・lastMaCheckDate変数を削除済み。node --checkと実起動でモジュール読み込みエラーがないことを確認済み（Discordログイン手前のトークンエラーは今回の変更と無関係な環境要因）。services/mail/ma/run.js・extract.js・services/mail/notify/chatwork.jsのファイル自体、.envのCHATWORK設定は変更せず残置（復活させる場合はindex.jsに4箇所書き戻すだけでよい）
+- 完了した状態：index.jsからrunMaDealCheckのrequire・毎日9時cron呼び出し・起動時キャッチアップ呼び出し・lastMaCheckDate変数を削除済み。node --checkと実起動でモジュール読み込みエラーがないことを確認済み（Discordログイン手前のトークンエラーは今回の変更と無関係な環境要因）。services/mail/ma/run.js・extract.js・services/mail/notify/chatwork.jsのファイル自体、.envのCHATWORK設定は変更せず残置（復活させる場合はindex.jsに4箇所書き戻すだけでよい）。並行して他PC（ノートPC）で追加されたma-cp.com自動収集機能（macp、デフォルトOFF）とはコンフリクトしたが、macpは今回の対象外のためrequire・cron呼び出しとも残す形でマージ解消した
 - 残課題・次にやること：本番Oracle VM（ubuntu@141.147.175.174）へのgit pull・pm2 restartが未実施。次回本番反映時に対応する
 - 触ったファイル：index.js、HISTORY.md、SESSION_LOG.md

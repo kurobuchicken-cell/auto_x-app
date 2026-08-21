@@ -52,4 +52,4 @@ function formatDisplayDate(jstNow, isMonday, startDate, endDate) {
   return `${today}　対象: ${formatShortDate(startDate)}`;
 }
 
-module.exports = { getJSTDate, getDateRange, formatGmailDate, formatDisplayDate };
+module.exports = { getJSTDate, getDateRange, formatGmailDate, formatDisplayDate, formatShortDate };

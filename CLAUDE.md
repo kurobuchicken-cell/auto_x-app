@@ -27,7 +27,7 @@ NORTHEPTIONのX（Twitter）投稿を半自動化するDiscord Bot。
 
 ## よく使うコマンド
 - 起動：npm start
-- 本番稼働：pm2 start index.js --name northeption-bot
+- 本番稼働：pm2 restart northeption-sns-bot（Oracle VM上で稼働中。プロセス名は`northeption-sns-bot`）
 
 ## 今後追加予定の機能
 - 毎週月曜の自動ネタ提案
