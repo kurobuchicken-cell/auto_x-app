@@ -1,7 +1,6 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const { runMailCheck } = require('./services/mail/run');
-const { runMaDealCheck } = require('./services/mail/ma/run');
 const { runMacpCheck } = require('./services/mail/macp/run');
 const Anthropic = require('@anthropic-ai/sdk');
 const fs = require('fs');
@@ -390,7 +389,6 @@ let lastDraftDate = null;
 let lastHearingDate = null;
 let lastCalendarCheckDate = null;
 let lastMailCheckDate = null;
-let lastMaCheckDate = null;
 let lastMacpCheckDate = null;
 
 setInterval(async () => {
@@ -421,12 +419,6 @@ setInterval(async () => {
   if (h === 9 && m < 10 && lastMailCheckDate !== today) {
     lastMailCheckDate = today;
     await runMailCheck().catch(err => console.error('メールチェックエラー:', err));
-  }
-
-  // 9:00〜9:10 の間に1回だけMA案件紹介メールチェック
-  if (h === 9 && m < 10 && lastMaCheckDate !== today) {
-    lastMaCheckDate = today;
-    await runMaDealCheck().catch(err => console.error('MA案件チェックエラー:', err));
   }
 
   // 9:00〜9:10 の間に1回だけma-cp.com案件チェック（MACP_SCRAPE_ENABLED=trueの場合のみ）
@@ -477,11 +469,6 @@ client.on('ready', async () => {
       lastMailCheckDate = today;
       console.log('🔄 起動時キャッチアップ：メールチェック実行');
       runMailCheck().catch(err => console.error('メールチェックキャッチアップエラー:', err));
-    }
-    if (lastMaCheckDate !== today) {
-      lastMaCheckDate = today;
-      console.log('🔄 起動時キャッチアップ：MA案件チェック実行');
-      runMaDealCheck().catch(err => console.error('MA案件チェックキャッチアップエラー:', err));
     }
     if (lastMacpCheckDate !== today) {
       lastMacpCheckDate = today;
