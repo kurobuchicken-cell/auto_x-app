@@ -99,3 +99,17 @@
   - 今回の修正は「7/22以降を正しい内容にリセット」のみ。7/22より前のズレた実データ（7/6〜7/24あたり）が実際にXへ投稿されたかどうかは検証していない（過去のことなので今回は対応不要と判断）
   - `skipped`ステータス導入により、今後`!status`コマンドで`[skipped]`表示された投稿は「本当に見送ってよかったか」を管理者が都度確認する運用が望ましい
 - 触ったファイル：`index.js`・`HISTORY.md`・`SESSION_LOG.md`、VM側`/data/schedule.json`（git管理外・直接修正）
+
+## auto_x-app-schedulebugfix-02（2026-09-09）
+- 作業環境：ノートPC
+- やったこと：
+  - 「最近Discordに投稿提案通知が来ない」との問い合わせを受け、Oracle VM（`ubuntu@141.147.175.174`、鍵は`tokens/oracle_vm_key`）にSSH接続してpm2ログ・`/data/schedule.json`を調査
+  - 2026-08-03の投稿が投稿完了確認待ち（`drafts_sent`）のまま未解決で残っており、`sendTodayDrafts`の「前回の非時限投稿が完了しているか確認」ロジックによって以降ずっと本日分の送信がブロックされていたことが判明（ログに「⏸️ 前回投稿の完了確認待ちのため本日分をスキップ」が8/21の前回再起動以降ずっと出続けていた）
+  - ユーザーに確認したところ8/3分は未投稿・見送りでよいとのことだったため、`/data/schedule.json`をバックアップ後に該当投稿のstatusを`skipped`に変更し、`pm2 restart northeption-sns-bot`でメモリ上の確認待ち状態（`currentPrevConfirmMessageId`）をリセット
+- 完了した状態：
+  - VM側`/data/schedule.json`修正済み（バックアップ：`/data/schedule.json.bak_20260909_035240`）、pm2再起動・起動確認済み
+  - ローカルのコードは変更なし。次回のscheduled投稿日から正常に通知が届く見込み（本日9/9分は元々見送り扱いのため通知なし）
+- 残課題・次にやること：
+  - `currentPrevConfirmMessageId`は起動時に復元されない設計のため、確認待ちメッセージへのリアクションを長期間押し忘れると今回と同様に全体がブロックされ続ける。再発防止として「確認待ちが一定日数続いたらリマインド通知する」等の改善を今後検討してもよい
+  - 今回もSSH鍵は`tokens/oracle_vm_key`（プロジェクト内）にあることを確認できた。接続情報は`Oracle移行手順書.md`参照
+- 触ったファイル：VM側`/data/schedule.json`（git管理外・直接修正）、`SESSION_LOG.md`
