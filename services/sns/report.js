@@ -52,11 +52,13 @@ async function fetchSnapshot(now = Date.now()) {
   const userId = user.data.id;
   const startTime = new Date(now - 14 * 24 * 60 * 60 * 1000).toISOString();
   const tl = await xGet(
-    `/users/${userId}/tweets?max_results=20&exclude=retweets,replies&tweet.fields=created_at,public_metrics&start_time=${startTime}`
+    `/users/${userId}/tweets?max_results=20&exclude=retweets,replies&tweet.fields=created_at,public_metrics,attachments&expansions=attachments.poll_ids&poll.fields=options&start_time=${startTime}`
   );
   const draftItems = store.load('drafts').items;
+  const polls = Object.fromEntries((tl.includes?.polls || []).map(pl => [pl.id, pl.options.reduce((a, o) => a + (o.votes || 0), 0)]));
   const posts = (tl.data || []).map(t => {
     const draft = matchDraft(t.text, draftItems);
+    const pollId = t.attachments?.poll_ids?.[0];
     return {
       id: t.id,
       draftId: draft?.id ?? null,
@@ -67,6 +69,7 @@ async function fetchSnapshot(now = Date.now()) {
       likes: t.public_metrics.like_count,
       reposts: t.public_metrics.retweet_count + (t.public_metrics.quote_count || 0),
       replies: t.public_metrics.reply_count,
+      pollVotes: pollId ? (polls[pollId] ?? null) : null,
       type: draft?.type ?? null,
     };
   });
@@ -91,7 +94,7 @@ function buildReport(snapshot, history) {
   lines.push('', `**この1週間の投稿（${thisWeek.length}件）**`);
   for (const p of thisWeek) {
     const d = new Date(Date.parse(p.createdAt) + 9 * 60 * 60 * 1000).toISOString().slice(5, 10).replace('-', '/');
-    lines.push(`・${d} [${p.type || '型不明'}] ${p.text.replace(/\s+/g, ' ').slice(0, 30)}…\n　表示 ${fmtNum(p.impressions)} / いいね ${fmtNum(p.likes)} / RT ${fmtNum(p.reposts)} / 返信 ${fmtNum(p.replies)}`);
+    lines.push(`・${d} [${p.type || '型不明'}] ${p.text.replace(/\s+/g, ' ').slice(0, 30)}…\n　表示 ${fmtNum(p.impressions)} / いいね ${fmtNum(p.likes)} / RT ${fmtNum(p.reposts)} / 返信 ${fmtNum(p.replies)}${p.pollVotes !== null && p.pollVotes !== undefined ? ` / 投票 ${fmtNum(p.pollVotes)}票` : ''}`);
   }
   if (thisWeek.length === 0) lines.push('なし');
 
