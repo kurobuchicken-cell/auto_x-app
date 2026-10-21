@@ -9,8 +9,8 @@ const PATTERN_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        properties: { label: { type: 'string' }, text: { type: 'string' } },
-        required: ['label', 'text'],
+        properties: { label: { type: 'string' }, text: { type: 'string' }, note: { type: 'string' } },
+        required: ['label', 'text', 'note'],
         additionalProperties: false,
       },
     },
@@ -47,12 +47,15 @@ ${typeLine}
 材料：
 ${material}
 ${extra ? `\n補足：\n${extra}\n` : ''}${styleExamples()}
-${ask}`;
+${ask}
+
+- text はXにそのまま貼れる投稿本文だけにする。【要確認：〜】は、投稿前に埋める必要がある事実が欠けているときだけ本文に残す
+- アンケートの選択肢、正解発表の文、オーナーが投稿前に確認すべきことは本文に入れず note に書く。note は必要なことだけを短く（字数の説明や、使わなかった材料の説明は書かない）。無ければ空文字`;
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     const { patterns } = await claude.callJSON(prompt, PATTERN_SCHEMA);
     if (patterns.length >= count) {
-      return patterns.slice(0, count).map(p => ({ label: p.label, text: enforceRules(p.text, { tournament: !!format }) }));
+      return patterns.slice(0, count).map(p => ({ label: p.label, text: enforceRules(p.text, { tournament: !!format }), note: (p.note || '').trim() }));
     }
     console.warn(`⚠️ パターン数が${patterns.length}件のため再生成（${attempt}回目）`);
   }
@@ -69,14 +72,15 @@ function logDrafts({ type, topic, patterns, source, factNos = [], url = null }) 
 
 // スマホで1パターンずつ長押しコピーできるよう、パターンごとに別メッセージで送る
 async function sendPatterns(channel, header, patterns) {
-  const block = text => `\`\`\`\n${text}\n\`\`\``;
+  // メモはコピー用の枠の外に出し、本文と一緒に貼られないようにする
+  const block = p => `\`\`\`\n${p.text}\n\`\`\`${p.note ? `\n📝 ${p.note}` : ''}`;
   if (patterns.length === 1) {
-    return channel.send(`${header ? `${header}\n` : ''}${block(patterns[0].text)}`);
+    return channel.send(`${header ? `${header}\n` : ''}${block(patterns[0])}`);
   }
   const first = header ? await channel.send(header) : null;
   let msg = null;
   for (const p of patterns) {
-    msg = await channel.send(`**【${p.label}】**\n${block(p.text)}`);
+    msg = await channel.send(`**【${p.label}】**\n${block(p)}`);
   }
   return first || msg;
 }

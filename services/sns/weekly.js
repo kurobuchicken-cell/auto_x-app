@@ -73,6 +73,8 @@ async function plan(today) {
 - 3週間以内に大会の予定があるか、直近の結果があれば「大会の物語化」を必ず1本入れる
 - 型ごとの効果を比べたいので、過去6週の本数が少ない型を優先する。過去6週の型ごとの${ctx.tracking ? '投稿' : '文案'}本数：${JSON.stringify(typeCounts(ctx.recentDrafts, ctx.tracking))}
 - 最近のテーマと同じ話を繰り返さない
+- 1本ずつ単体で読める投稿にする。オーナーはどれか1本だけを投稿することもあるので、今週のほかの投稿を前提にしない（「連載第2回」「アンケートで教えて」のように別の投稿に頼らない）
+- 「前回」「連載の続き」として触れてよいのは、下の「投稿済みのテーマ」だけ。未投稿のテーマは、まだ世に出ていない
 - material には、文案を書く人がそれだけで書けるように、使う事実・回答・前回の結果をまとめて書く
 - fact_nos と answer_ids には使った材料の番号を入れる
 
@@ -88,8 +90,11 @@ ${ctx.fresh.map(fmtFact).join('\n') || 'なし'}
 ## 選手の回答（未使用）
 ${ctx.answers.map(a => `id=${a.id} ${a.player}：Q「${a.question}」→ A「${a.answer}」`).join('\n') || 'なし'}
 
-## 最近（6週以内）に${ctx.tracking ? '投稿した' : '出した'}テーマ
-${ctx.recentDrafts.map(d => `${d.date} [${d.type || '型なし'}] ${d.topic}`).join('\n') || 'なし'}`;
+## 投稿済みのテーマ（6週以内。「前回」として触れてよい）
+${ctx.recentDrafts.filter(d => d.postedAt).map(d => `${d.date} [${d.type || '型なし'}] ${d.topic}`).join('\n') || 'なし'}
+
+## 最近出したが未投稿のテーマ（同じ話は避ける。「前回」として触れない）
+${ctx.recentDrafts.filter(d => !d.postedAt).map(d => `${d.date} [${d.type || '型なし'}] ${d.topic}`).join('\n') || 'なし'}`;
 
   const { posts } = await claude.callJSON(prompt, PLAN_SCHEMA, { effort: 'medium' });
   return posts.slice(0, 4);
