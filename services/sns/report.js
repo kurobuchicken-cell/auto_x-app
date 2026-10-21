@@ -32,15 +32,19 @@ function similarity(a, b) {
   return (2 * common) / (A.size + B.size);
 }
 
-function guessType(text, draftItems) {
-  let best = { type: null, score: 0 };
+function matchDraft(text, draftItems) {
+  let best = { draft: null, score: 0 };
   for (const d of draftItems) {
     for (const p of d.patterns) {
       const score = similarity(text, p);
-      if (score > best.score) best = { type: d.type, score };
+      if (score > best.score) best = { draft: d, score };
     }
   }
-  return best.score >= 0.5 ? best.type : null;
+  return best.score >= 0.5 ? best.draft : null;
+}
+
+function guessType(text, draftItems) {
+  return matchDraft(text, draftItems)?.type ?? null;
 }
 
 async function fetchSnapshot(now = Date.now()) {
@@ -51,16 +55,21 @@ async function fetchSnapshot(now = Date.now()) {
     `/users/${userId}/tweets?max_results=20&exclude=retweets,replies&tweet.fields=created_at,public_metrics&start_time=${startTime}`
   );
   const draftItems = store.load('drafts').items;
-  const posts = (tl.data || []).map(t => ({
-    id: t.id,
-    createdAt: t.created_at,
-    text: t.text.slice(0, 120),
-    impressions: t.public_metrics.impression_count ?? null,
-    likes: t.public_metrics.like_count,
-    reposts: t.public_metrics.retweet_count + (t.public_metrics.quote_count || 0),
-    replies: t.public_metrics.reply_count,
-    type: guessType(t.text, draftItems),
-  }));
+  const posts = (tl.data || []).map(t => {
+    const draft = matchDraft(t.text, draftItems);
+    return {
+      id: t.id,
+      draftId: draft?.id ?? null,
+      fullText: t.text,
+      createdAt: t.created_at,
+      text: t.text.slice(0, 120),
+      impressions: t.public_metrics.impression_count ?? null,
+      likes: t.public_metrics.like_count,
+      reposts: t.public_metrics.retweet_count + (t.public_metrics.quote_count || 0),
+      replies: t.public_metrics.reply_count,
+      type: draft?.type ?? null,
+    };
+  });
   return { date: todayJST(now), followers: user.data.public_metrics.followers_count, posts };
 }
 
@@ -116,8 +125,20 @@ async function run(channel) {
   const snapshot = await fetchSnapshot();
   const history = store.load('metrics').snapshots;
   const text = buildReport(snapshot, history);
+  // 投稿された文案に印を付け、実際の文面（手直し後）を次の文案のお手本として残す
+  store.update('drafts', d => {
+    for (const p of snapshot.posts) {
+      const item = p.draftId && d.items.find(x => x.id === p.draftId);
+      if (item && !item.postedAt) {
+        item.postedAt = p.createdAt;
+        item.postedText = p.fullText;
+        item.tweetId = p.id;
+      }
+    }
+  });
+  for (const p of snapshot.posts) delete p.fullText;
   store.update('metrics', m => { m.snapshots.push(snapshot); });
   for (let i = 0; i < text.length; i += 1900) await channel.send(text.slice(i, i + 1900));
 }
 
-module.exports = { run, buildReport, guessType, similarity, fetchSnapshot };
+module.exports = { run, buildReport, guessType, matchDraft, similarity, fetchSnapshot };

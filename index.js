@@ -8,6 +8,8 @@ const drafts = require('./services/sns/drafts');
 const weekly = require('./services/sns/weekly');
 const questions = require('./services/sns/questions');
 const report = require('./services/sns/report');
+const research = require('./services/sns/research');
+const events = require('./services/sns/events');
 
 const client = new Client({
   intents: [
@@ -25,7 +27,9 @@ const STAFF_IDS = [MANAGER_ID, ...(process.env.DISCORD_STAFF_IDS || '').split(',
 
 const HELP_TEXT = `📖 **使い方**（何を書いても文案を3パターン返します）
 ・ネタ・お知らせ・大会予定・結果は、そのまま書けば記録して文案を作ります
-・まだ出せない情報は「未公開：〜」と書く → 解禁前として扱い、週の文案に入れません
+・大会の予定・結果は、ウェブとstart.ggで裏を取ってから文案にします
+・大会の3日前〜前日に告知文、終わった翌日に結果報告文を自動で出します
+・まだ出せない情報は「未公開：〜」と書く → 解禁前として扱い、検索にも週の文案にも使いません
 ・「今週の文案」→ 今週の文案を今すぐ作る
 ・「質問案」→ 選手への質問案を今すぐ作る
 ・「レポート」→ Xの数字レポートを今すぐ出す
@@ -96,6 +100,26 @@ async function runDueWeeklyJobs(now = Date.now()) {
   }
 }
 
+// ── 毎日の大会チェック（告知・結果報告） ─────────────────────
+
+const DAILY_EVENTS_HOUR = 10;
+let dailyEventsRunning = false;
+
+// 実行済みの日付をファイルに残し、再起動しても同じ日に二重に走らせない
+async function runDailyEvents(now = Date.now()) {
+  const jst = new Date(now + 9 * 60 * 60 * 1000);
+  const today = jst.toISOString().split('T')[0];
+  if (dailyEventsRunning || jst.getUTCHours() < DAILY_EVENTS_HOUR) return;
+  if (store.load('state').lastRun.events === today) return;
+  dailyEventsRunning = true;
+  store.update('state', s => { s.lastRun.events = today; });
+  try {
+    await events.runDaily(await botChannel(), MANAGER_ID, now);
+  } finally {
+    dailyEventsRunning = false;
+  }
+}
+
 // ── 定期実行 ──────────────────────────────────────────────────
 
 let lastMailCheckDate = null;
@@ -108,6 +132,7 @@ setInterval(async () => {
   const today = now.toISOString().split('T')[0];
 
   await runDueWeeklyJobs().catch(err => console.error('週次ジョブエラー:', err));
+  await runDailyEvents().catch(err => console.error('大会チェックエラー:', err));
 
   // 9時以降に1日1回メールチェック（再起動で9時台を逃しても当日中に実行される）
   if (h >= 9 && lastMailCheckDate !== today) {
@@ -189,6 +214,24 @@ async function handleFreeText(message, text) {
   const warn = embargoed ? '⚠️ **解禁前の情報です。公開されるまで投稿しないでください**（解禁後は「解禁 番号」）\n' : '';
   const results = saved.filter(f => f.kind === '結果');
 
+  // 大会の情報は必ずウェブで裏を取る。未公開の情報は外に出さないため検索にかけない
+  const eventFact = !embargoed && (results[0] || saved.find(f => f.kind === '予定'));
+  let researched = null;
+  if (eventFact) {
+    const mode = eventFact.kind === '結果' ? 'result' : 'preview';
+    try {
+      researched = await research.researchEvent(eventFact, mode);
+      research.saveResearch(eventFact.no, mode, researched);
+      await ch.send(research.summarize(researched, mode));
+    } catch (err) {
+      console.error('裏取りエラー（文案づくりは続行）:', err);
+      await ch.send('🔎 裏取りに失敗しました。URLや日付は【要確認】として文案を作ります。');
+    }
+  }
+  const material = researched
+    ? `${text}\n\n## 裏取りで確認した情報\n${research.asMaterial(researched, results.length ? 'result' : 'preview')}`
+    : text;
+
   if (results.length) {
     const players = [...new Set(results.flatMap(f => f.players))];
     const prev = facts.previousResults(players, results.map(f => f.no));
@@ -196,16 +239,18 @@ async function handleFreeText(message, text) {
       const list = prev[name] || [];
       return `${name}：${list.length ? list.map(f => `${f.date || f.createdAt} ${f.event} ${f.placement}`).join(' / ') : '記録なし（今回が初めての記録）'}`;
     }).join('\n');
-    await drafts.draftAndSend(ch, text, {
+    await drafts.draftAndSend(ch, material, {
       type: '大会の物語化',
+      format: '大会結果',
       source: 'result',
       header: `${warn}🏆 **大会結果の文案です**（前回の成績と比べています）`,
-      extra: `各選手の過去の成績（新しい順）：\n${prevText}\n\n順位を並べるのではなく、前回からの変化（伸びた点・悔しさ・次への課題）を物語として書く。前回の記録が無い選手は比較を作らず、今回の挑戦として書く。`,
+      extra: `各選手の過去の成績（新しい順）：\n${prevText}\n\n順位を並べたうえで、前回からの変化（伸びた点・悔しさ・次への課題）を物語として書く。前回の記録が無い選手は比較を作らず、今回の挑戦として書く。双子のどちらかだけを持ち上げない。`,
     });
+    events.markReported(results);
     return;
   }
 
-  await drafts.draftAndSend(ch, text, { header: warn || null, source: 'manual' });
+  await drafts.draftAndSend(ch, material, { header: warn || null, source: 'manual' });
 }
 
 client.on('ready', async () => {
@@ -263,6 +308,6 @@ client.on('messageReactionAdd', async (reaction, user) => {
   }
 });
 
-module.exports = { runDueWeeklyJobs, weekKey, handleCommand, handleFreeText, client };
+module.exports = { runDueWeeklyJobs, runDailyEvents, weekKey, handleCommand, handleFreeText, client };
 
 if (require.main === module) client.login(process.env.DISCORD_BOT_TOKEN);

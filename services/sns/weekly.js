@@ -37,15 +37,24 @@ function gatherContext(today) {
   const facts = store.load('facts').items.filter(f => !f.embargoed);
   const upcoming = facts.filter(f => f.kind === '予定' && f.date && f.date >= today && f.date <= addDays(today, 21));
   const results = facts.filter(f => f.kind === '結果' && (f.date || f.createdAt) >= addDays(today, -21));
-  const fresh = facts.filter(f => ['お知らせ', 'ネタ'].includes(f.kind) && !f.usedAt && f.createdAt >= addDays(today, -30));
+  const allDrafts = store.load('drafts').items;
+  // 数字の取得（X API）が動いていれば「実際に投稿されたか」が分かるので、投稿されたものだけを
+  // 「やったこと」とする。投稿されなかったテーマ・材料は1週間あければまた候補に戻す
+  const tracking = store.load('metrics').snapshots.length > 0;
+  const done = d => (tracking ? d.postedAt || d.date >= addDays(today, -7) : true);
+  const recentDrafts = allDrafts.filter(d => d.date >= addDays(today, -42) && done(d));
+  const usedFactNos = new Set(allDrafts.filter(done).flatMap(d => d.factNos || []));
+  const fresh = facts.filter(f => ['お知らせ', 'ネタ'].includes(f.kind) && !usedFactNos.has(f.no) && f.createdAt >= addDays(today, -30));
   const answers = store.load('answers').items.filter(a => !a.usedAt && a.at.slice(0, 10) >= addDays(today, -21));
-  const recentDrafts = store.load('drafts').items.filter(d => d.date >= addDays(today, -42));
-  return { upcoming, results, fresh, answers, recentDrafts };
+  return { upcoming, results, fresh, answers, recentDrafts, tracking };
 }
 
-function typeCounts(recentDrafts) {
+function typeCounts(recentDrafts, tracking) {
   const counts = Object.fromEntries(TYPES.map(t => [t, 0]));
-  for (const d of recentDrafts) if (d.source !== 'manual' && counts[d.type] !== undefined) counts[d.type]++;
+  for (const d of recentDrafts) {
+    const counted = tracking ? d.postedAt : d.source !== 'manual';
+    if (counted && counts[d.type] !== undefined) counts[d.type]++;
+  }
   return counts;
 }
 
@@ -62,7 +71,7 @@ async function plan(today) {
 
 ## 決め方
 - 3週間以内に大会の予定があるか、直近の結果があれば「大会の物語化」を必ず1本入れる
-- 型ごとの効果を比べたいので、過去6週の本数が少ない型を優先する。過去6週の型ごとの本数：${JSON.stringify(typeCounts(ctx.recentDrafts))}
+- 型ごとの効果を比べたいので、過去6週の本数が少ない型を優先する。過去6週の型ごとの${ctx.tracking ? '投稿' : '文案'}本数：${JSON.stringify(typeCounts(ctx.recentDrafts, ctx.tracking))}
 - 最近のテーマと同じ話を繰り返さない
 - material には、文案を書く人がそれだけで書けるように、使う事実・回答・前回の結果をまとめて書く
 - fact_nos と answer_ids には使った材料の番号を入れる
@@ -79,7 +88,7 @@ ${ctx.fresh.map(fmtFact).join('\n') || 'なし'}
 ## 選手の回答（未使用）
 ${ctx.answers.map(a => `id=${a.id} ${a.player}：Q「${a.question}」→ A「${a.answer}」`).join('\n') || 'なし'}
 
-## 最近（6週以内）のテーマ
+## 最近（6週以内）に${ctx.tracking ? '投稿した' : '出した'}テーマ
 ${ctx.recentDrafts.map(d => `${d.date} [${d.type || '型なし'}] ${d.topic}`).join('\n') || 'なし'}`;
 
   const { posts } = await claude.callJSON(prompt, PLAN_SCHEMA, { effort: 'medium' });
@@ -87,11 +96,6 @@ ${ctx.recentDrafts.map(d => `${d.date} [${d.type || '型なし'}] ${d.topic}`).j
 }
 
 function markUsed(post, today) {
-  if (post.fact_nos.length) {
-    store.update('facts', d => {
-      for (const f of d.items) if (post.fact_nos.includes(f.no) && ['お知らせ', 'ネタ'].includes(f.kind)) f.usedAt = today;
-    });
-  }
   if (post.answer_ids.length) {
     store.update('answers', d => {
       for (const a of d.items) if (post.answer_ids.includes(a.id)) a.usedAt = today;
@@ -104,7 +108,7 @@ async function run(channel, managerId) {
   const posts = await plan(today);
   if (posts.length === 0) throw new Error('今週の計画が0本でした');
 
-  await channel.send(`📅 **今週の文案（${posts.length}本）です** <@${managerId}>\n投稿する曜日・時間はおまかせです。使わなかった分はそのままで大丈夫です。`);
+  await channel.send(`📅 **今週の文案（${posts.length}本）です** <@${managerId}>\n気に入ったものをコピペで投稿してください。使わない分は放置でOK（投稿されなかったテーマは後日また出します）。別の案が欲しいときは、そのテーマを書き込めば3パターン返します。`);
 
   let sent = 0;
   for (const [i, post] of posts.entries()) {
@@ -113,6 +117,8 @@ async function run(channel, managerId) {
         type: post.type,
         topic: post.topic,
         source: 'weekly',
+        count: 1,
+        factNos: post.fact_nos,
         header: `━━━━━━━━━━\n**${i + 1}/${posts.length}【${post.type}】${post.topic}**`,
       });
       markUsed(post, today);

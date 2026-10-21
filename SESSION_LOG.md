@@ -167,4 +167,12 @@
   - オーナー：Botを #oniki #サトル #双子 #あしゅまる に参加させる
   - 未公開のU22トパチャン招待（サトル・兄）は、反映後にsns-botへ「未公開：〜」と書けば記録される
   - 1〜2週間後：プロフィール変更の効果を確認（アクセス数は変更前が7日で121件）
-- 触ったファイル：index.js、services/sns/*.js、schedule.json（削除）、仕様書_auto_x-app.html、.gitignore、.env.example、CLAUDE.md、HISTORY.md、SESSION_LOG.md
+- 追記（同日・反映後）：
+  - 740180aをVMに反映した。水曜の反映だったため、今週分（レポートの「未設定」・文案・質問案）がすぐに出た。質問はまだ選手に送っていない（✅待ち）
+  - オーナーの指摘を受けて追加した：週の文案を1本1案に／投稿の追跡とお手本／大会情報の裏取り（Web検索＋start.gg API＋Perplexity）／毎日10時の大会告知・結果報告／オーナー確定の告知・結果報告の型。模擬実行44項目がすべて成功し、本物のAPIでもVMの/tmpで確認した
+  - オーナー指示「判断させる選択肢は少なく、Claudeが決めて進める」をCLAUDE.mdに記録した
+- 残課題（追加）：
+  - start.ggのAPIキー（無料）をオーナーが発行し、VMの.envに STARTGG_TOKEN として設定する。これで選手ごとのプール・順位が自動で取れる。実際の応答での確認も、設定後に行う
+  - Perplexityを使う場合は、APIキー（有料）を PERPLEXITY_API_KEY に設定する
+  - X APIのキー（X_BEARER_TOKEN）。これで週次レポートと投稿の追跡・お手本が動く
+- 触ったファイル：index.js、services/sns/*.js（research・startgg・eventsを追加）、schedule.json（削除）、仕様書_auto_x-app.html、.gitignore、.env.example、CLAUDE.md、HISTORY.md、SESSION_LOG.md
