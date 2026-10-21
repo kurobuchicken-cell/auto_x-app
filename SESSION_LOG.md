@@ -175,5 +175,8 @@
 - 残課題（追加）：
   - （完了）start.ggのAPIキーをVMの.envに設定し、WW#4で5人分のプール・URL・順位・参加人数が正解と一致することを確認した。初戦のプールを選ぶ修正などは未反映（次の反映で入る）
   - Perplexityを使う場合は、APIキー（有料）を PERPLEXITY_API_KEY に設定する
-  - X APIのキー（X_BEARER_TOKEN）。これで週次レポートと投稿の追跡・お手本が動く
+  - （完了）X APIを登録し（$25チャージ）、X_BEARER_TOKENをVMの.envに設定した。フォロワー数（87,496）と直近14日の9投稿の数字が取れることを確認した。次の月曜7時から週次レポートが動く
+  - （完了）a6c8d95（start.ggの修正）をVMに反映した
+  - STARTGG_TOKEN・X_BEARER_TOKENはVMの.envにだけある（ノートPCの.env・dev-configには無い）。VMを作り直すときは、キーを発行し直して同じ手順で設定する
+  - オーナー：sns-botに「11/29 WW#5 全員出場」を書き込む
 - 触ったファイル：index.js、services/sns/*.js（research・startgg・eventsを追加）、schedule.json（削除）、仕様書_auto_x-app.html、.gitignore、.env.example、CLAUDE.md、HISTORY.md、SESSION_LOG.md
