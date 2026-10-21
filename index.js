@@ -10,6 +10,7 @@ const questions = require('./services/sns/questions');
 const report = require('./services/sns/report');
 const research = require('./services/sns/research');
 const events = require('./services/sns/events');
+const reminders = require('./services/sns/reminders');
 
 const client = new Client({
   intents: [
@@ -29,6 +30,7 @@ const HELP_TEXT = `📖 **使い方**（何を書いても文案を3パターン
 ・ネタ・お知らせ・大会予定・結果は、そのまま書けば記録して文案を作ります
 ・大会の予定・結果は、ウェブとstart.ggで裏を取ってから文案にします
 ・大会の3日前〜前日に告知文、終わった翌日に結果報告文を自動で出します
+・対応待ち（質問案の✅／❌、大会の告知・結果の未投稿など）は毎日18時にまとめてお知らせします
 ・まだ出せない情報は「未公開：〜」と書く → 解禁前として扱い、検索にも週の文案にも使いません
 ・「今週の文案」→ 今週の文案を今すぐ作る
 ・「質問案」→ 選手への質問案を今すぐ作る
@@ -102,23 +104,34 @@ async function runDueWeeklyJobs(now = Date.now()) {
 
 // ── 毎日の大会チェック（告知・結果報告） ─────────────────────
 
-const DAILY_EVENTS_HOUR = 10;
-let dailyEventsRunning = false;
+const DAILY_JOBS = [
+  { key: 'events', hour: 10, run: (ch, now) => events.runDaily(ch, MANAGER_ID, now) },
+  { key: 'reminders', hour: 18, run: (ch, now) => reminders.runDaily(ch, MANAGER_ID, now) },
+];
+const runningDaily = new Set();
 
 // 実行済みの日付をファイルに残し、再起動しても同じ日に二重に走らせない
-async function runDailyEvents(now = Date.now()) {
+async function runDailyJobs(now = Date.now(), only = null) {
   const jst = new Date(now + 9 * 60 * 60 * 1000);
   const today = jst.toISOString().split('T')[0];
-  if (dailyEventsRunning || jst.getUTCHours() < DAILY_EVENTS_HOUR) return;
-  if (store.load('state').lastRun.events === today) return;
-  dailyEventsRunning = true;
-  store.update('state', s => { s.lastRun.events = today; });
-  try {
-    await events.runDaily(await botChannel(), MANAGER_ID, now);
-  } finally {
-    dailyEventsRunning = false;
+  for (const job of DAILY_JOBS) {
+    if (only && job.key !== only) continue;
+    if (runningDaily.has(job.key) || jst.getUTCHours() < job.hour) continue;
+    if (store.load('state').lastRun[job.key] === today) continue;
+    runningDaily.add(job.key);
+    store.update('state', s => { s.lastRun[job.key] = today; });
+    try {
+      await job.run(await botChannel(), now);
+    } catch (err) {
+      console.error(`毎日の処理（${job.key}）エラー:`, err);
+    } finally {
+      runningDaily.delete(job.key);
+    }
   }
 }
+
+const runDailyEvents = (now = Date.now()) => runDailyJobs(now, 'events');
+const runDailyReminders = (now = Date.now()) => runDailyJobs(now, 'reminders');
 
 // ── 定期実行 ──────────────────────────────────────────────────
 
@@ -132,7 +145,7 @@ setInterval(async () => {
   const today = now.toISOString().split('T')[0];
 
   await runDueWeeklyJobs().catch(err => console.error('週次ジョブエラー:', err));
-  await runDailyEvents().catch(err => console.error('大会チェックエラー:', err));
+  await runDailyJobs().catch(err => console.error('毎日の処理エラー:', err));
 
   // 9時以降に1日1回メールチェック（再起動で9時台を逃しても当日中に実行される）
   if (h >= 9 && lastMailCheckDate !== today) {
@@ -308,6 +321,6 @@ client.on('messageReactionAdd', async (reaction, user) => {
   }
 });
 
-module.exports = { runDueWeeklyJobs, runDailyEvents, weekKey, handleCommand, handleFreeText, client };
+module.exports = { runDueWeeklyJobs, runDailyEvents, runDailyReminders, weekKey, handleCommand, handleFreeText, client };
 
 if (require.main === module) client.login(process.env.DISCORD_BOT_TOKEN);

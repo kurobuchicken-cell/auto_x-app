@@ -67,7 +67,7 @@ async function postProposal(channel, managerId, questions, note = '') {
   );
   await msg.react('✅');
   await msg.react('❌');
-  store.update('state', s => { s.pendingQuestion = { messageId: msg.id, questions, createdAt: new Date().toISOString() }; });
+  store.update('state', s => { s.pendingQuestion = { messageId: msg.id, url: msg.url ?? null, questions, createdAt: new Date().toISOString() }; });
 }
 
 async function propose(channel, managerId) {

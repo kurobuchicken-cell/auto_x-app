@@ -59,9 +59,9 @@ ${ask}`;
   throw new Error(`${count}パターンの生成に失敗しました`);
 }
 
-function logDrafts({ type, topic, patterns, source, factNos = [] }) {
+function logDrafts({ type, topic, patterns, source, factNos = [], url = null }) {
   return store.update('drafts', d => {
-    const item = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, date: todayJST(), type, topic, source, factNos, patterns: patterns.map(p => p.text) };
+    const item = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, date: todayJST(), type, topic, source, factNos, url, patterns: patterns.map(p => p.text) };
     d.items.push(item);
     return item;
   });
@@ -71,19 +71,20 @@ function logDrafts({ type, topic, patterns, source, factNos = [] }) {
 async function sendPatterns(channel, header, patterns) {
   const block = text => `\`\`\`\n${text}\n\`\`\``;
   if (patterns.length === 1) {
-    await channel.send(`${header ? `${header}\n` : ''}${block(patterns[0].text)}`);
-    return;
+    return channel.send(`${header ? `${header}\n` : ''}${block(patterns[0].text)}`);
   }
-  if (header) await channel.send(header);
+  const first = header ? await channel.send(header) : null;
+  let msg = null;
   for (const p of patterns) {
-    await channel.send(`**【${p.label}】**\n${block(p.text)}`);
+    msg = await channel.send(`**【${p.label}】**\n${block(p.text)}`);
   }
+  return first || msg;
 }
 
 async function draftAndSend(channel, material, { type = null, header = '', extra = '', source = 'manual', topic = null, count = 3, factNos = [], format = null } = {}) {
   const patterns = await generatePatterns(material, { type, extra, count, format });
-  await sendPatterns(channel, header, patterns);
-  logDrafts({ type, topic: topic || material.slice(0, 80), patterns, source, factNos });
+  const msg = await sendPatterns(channel, header, patterns);
+  logDrafts({ type, topic: topic || material.slice(0, 80), patterns, source, factNos, url: msg?.url ?? null });
   return patterns;
 }
 

@@ -117,17 +117,10 @@ function buildReport(snapshot, history) {
   return lines.join('\n');
 }
 
-async function run(channel) {
-  if (!process.env.X_BEARER_TOKEN) {
-    await channel.send('📊 週次レポート：X APIのキーが未設定のため、数字を取れませんでした。');
-    return;
-  }
-  const snapshot = await fetchSnapshot();
-  const history = store.load('metrics').snapshots;
-  const text = buildReport(snapshot, history);
-  // 投稿された文案に印を付け、実際の文面（手直し後）を次の文案のお手本として残す
+// 投稿された文案に印を付け、実際の文面（手直し後）を次の文案のお手本として残す
+function markPosted(posts) {
   store.update('drafts', d => {
-    for (const p of snapshot.posts) {
+    for (const p of posts) {
       const item = p.draftId && d.items.find(x => x.id === p.draftId);
       if (item && !item.postedAt) {
         item.postedAt = p.createdAt;
@@ -136,9 +129,35 @@ async function run(channel) {
       }
     }
   });
+}
+
+// リマインド用の軽い確認。直近数日の投稿だけを読み、投稿済みの印を更新する
+async function checkRecentPosts(days = 3, now = Date.now()) {
+  if (!process.env.X_BEARER_TOKEN) return false;
+  let userId = store.load('state').xUserId;
+  if (!userId) {
+    userId = (await xGet(`/users/by/username/${USERNAME}`)).data.id;
+    store.update('state', s => { s.xUserId = userId; });
+  }
+  const startTime = new Date(now - days * 24 * 60 * 60 * 1000).toISOString();
+  const tl = await xGet(`/users/${userId}/tweets?max_results=10&exclude=retweets,replies&tweet.fields=created_at&start_time=${startTime}`);
+  const draftItems = store.load('drafts').items;
+  markPosted((tl.data || []).map(t => ({ id: t.id, createdAt: t.created_at, fullText: t.text, draftId: matchDraft(t.text, draftItems)?.id ?? null })));
+  return true;
+}
+
+async function run(channel) {
+  if (!process.env.X_BEARER_TOKEN) {
+    await channel.send('📊 週次レポート：X APIのキーが未設定のため、数字を取れませんでした。');
+    return;
+  }
+  const snapshot = await fetchSnapshot();
+  const history = store.load('metrics').snapshots;
+  const text = buildReport(snapshot, history);
+  markPosted(snapshot.posts);
   for (const p of snapshot.posts) delete p.fullText;
   store.update('metrics', m => { m.snapshots.push(snapshot); });
   for (let i = 0; i < text.length; i += 1900) await channel.send(text.slice(i, i + 1900));
 }
 
-module.exports = { run, buildReport, guessType, matchDraft, similarity, fetchSnapshot };
+module.exports = { run, buildReport, guessType, matchDraft, similarity, fetchSnapshot, checkRecentPosts };
