@@ -146,6 +146,7 @@ setInterval(async () => {
 
   await runDueWeeklyJobs().catch(err => console.error('週次ジョブエラー:', err));
   await runDailyJobs().catch(err => console.error('毎日の処理エラー:', err));
+  await questions.flushAnswers(await botChannel()).catch(err => console.error('選手の回答のまとめエラー:', err));
 
   // 9時以降に1日1回メールチェック（再起動で9時台を逃しても当日中に実行される）
   if (h >= 9 && lastMailCheckDate !== today) {
@@ -281,7 +282,7 @@ client.on('messageCreate', async (message) => {
 
   if (message.channelId !== BOT_CHANNEL_ID) {
     try {
-      await questions.onPlayerMessage(message, await botChannel(), STAFF_IDS);
+      questions.onPlayerMessage(message, STAFF_IDS);
     } catch (err) {
       console.error('選手の回答の処理エラー:', err);
     }

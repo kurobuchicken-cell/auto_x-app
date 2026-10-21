@@ -133,31 +133,91 @@ function activeQuestionFor(channelId, now = Date.now()) {
     .pop() || null;
 }
 
-// 選手チャンネルにはスタッフも書き込むため、質問への「返信」か、スタッフ以外の書き込みだけを回答とみなす
-async function onPlayerMessage(message, botChannel, staffIds = []) {
-  const q = activeQuestionFor(message.channelId);
+const ANSWER_QUIET_MINUTES = 10;
+
+// 選手チャンネルにはスタッフも書き込むため、質問への「返信」か、スタッフ以外の書き込みだけを回答の候補にする。
+// 返信を使わず何通かに分けて答えることが多いので、すぐには文案にせず、書き込みが止まるまでためておく
+function onPlayerMessage(message, staffIds = [], now = Date.now()) {
+  const q = activeQuestionFor(message.channelId, now);
   if (!q) return false;
   const isReply = q.messageId && message.reference?.messageId === q.messageId;
   if (!isReply && staffIds.includes(message.author.id)) return false;
-  const answer = message.content.trim();
-  if (!answer) return false;
+  const text = message.content.trim();
+  if (!text) return false;
 
   const author = message.member?.displayName || message.author.username;
-  store.update('answers', d => {
-    d.items.push({ id: message.id, player: q.channelName, author, question: q.question, answer, at: new Date().toISOString(), usedAt: todayJST() });
+  store.update('state', s => {
+    s.answerBuffer = s.answerBuffer || {};
+    const b = s.answerBuffer[message.channelId] || { channelName: q.channelName, question: q.question, authors: [], parts: [], ids: [] };
+    if (!b.authors.includes(author)) b.authors.push(author);
+    b.parts.push(text);
+    b.ids.push(message.id);
+    b.lastAt = now;
+    s.answerBuffer[message.channelId] = b;
   });
-
-  await drafts.draftAndSend(
-    botChannel,
-    `${playersOf(q.channelName).join('・')}への質問「${q.question}」に、${author}がこう答えた：「${answer}」`,
-    {
-      type: '選手の声',
-      source: 'answer',
-      topic: `${q.channelName}の回答：${answer.slice(0, 40)}`,
-      header: `💬 **#${q.channelName} から回答がありました**\nQ：${q.question}\nA：${answer}`,
-    }
-  );
   return true;
 }
 
-module.exports = { propose, revise, approve, cancel, onPlayerMessage, activeQuestionFor, findChannel, CHANNELS };
+const RELEVANCE_SCHEMA = {
+  type: 'object',
+  properties: { is_answer: { type: 'boolean' }, answer: { type: 'string' } },
+  required: ['is_answer', 'answer'],
+  additionalProperties: false,
+};
+
+async function judgeAnswer(question, text) {
+  const prompt = `選手に次の質問を送り、そのあと選手がチャンネルに次の書き込みをしました。
+
+質問：${question}
+書き込み（複数に分かれていることがある）：
+${text}
+
+この書き込みが質問への答え（または投稿の材料になる選手自身の話）なら is_answer を true にし、answer に答えの中身を選手の言葉をできるだけ残して1つにまとめてください。
+スタッフへの事務連絡・雑談・スタンプだけなど、質問と関係ないなら is_answer を false、answer は空文字にしてください。`;
+  return claude.callJSON(prompt, RELEVANCE_SCHEMA, { effort: 'low', maxTokens: 2000 });
+}
+
+// 最後の書き込みから一定時間たった回答を、まとめて1つの答えとして文案にする
+async function flushAnswers(botChannel, now = Date.now()) {
+  const buffers = store.load('state').answerBuffer || {};
+  for (const [channelId, b] of Object.entries(buffers)) {
+    if (now - b.lastAt < ANSWER_QUIET_MINUTES * 60 * 1000) continue;
+    // 先に取り除く（文案づくりが失敗しても、同じ回答で何度も文案を出さないため）
+    store.update('state', s => { delete s.answerBuffer[channelId]; });
+
+    const raw = b.parts.join('\n');
+    let judged;
+    try {
+      judged = await judgeAnswer(b.question, raw);
+    } catch (err) {
+      console.error('回答の判定エラー（回答として扱う）:', err.message);
+      judged = { is_answer: true, answer: raw };
+    }
+    if (!judged.is_answer) {
+      console.log(`💤 #${b.channelName} の書き込みは質問への回答ではないため使わない：${raw.slice(0, 40)}`);
+      continue;
+    }
+
+    const author = b.authors.join('・');
+    store.update('answers', d => {
+      d.items.push({ id: b.ids[0], player: b.channelName, author, question: b.question, answer: judged.answer, raw, at: new Date(now).toISOString(), usedAt: todayJST(now) });
+    });
+    try {
+      await drafts.draftAndSend(
+        botChannel,
+        `${playersOf(b.channelName).join('・')}への質問「${b.question}」に、${author}がこう答えた：「${judged.answer}」`,
+        {
+          type: '選手の声',
+          source: 'answer',
+          topic: `${b.channelName}の回答：${judged.answer.slice(0, 40)}`,
+          header: `💬 **#${b.channelName} から回答がありました**\nQ：${b.question}\nA：${raw}`,
+        }
+      );
+    } catch (err) {
+      console.error('回答の文案づくりエラー:', err);
+      await botChannel.send(`💬 #${b.channelName} から回答がありました（文案づくりに失敗したので、必要ならこのまま書き込んでください）\nQ：${b.question}\nA：${raw}`).catch(() => {});
+    }
+  }
+}
+
+module.exports = { propose, revise, approve, cancel, onPlayerMessage, flushAnswers, activeQuestionFor, findChannel, CHANNELS };
