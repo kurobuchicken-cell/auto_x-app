@@ -132,13 +132,18 @@ function markPosted(posts) {
 }
 
 // リマインド用の軽い確認。直近数日の投稿だけを読み、投稿済みの印を更新する
-async function checkRecentPosts(days = 3, now = Date.now()) {
-  if (!process.env.X_BEARER_TOKEN) return false;
+async function getUserId() {
   let userId = store.load('state').xUserId;
   if (!userId) {
     userId = (await xGet(`/users/by/username/${USERNAME}`)).data.id;
     store.update('state', s => { s.xUserId = userId; });
   }
+  return userId;
+}
+
+async function checkRecentPosts(days = 3, now = Date.now()) {
+  if (!process.env.X_BEARER_TOKEN) return false;
+  const userId = await getUserId();
   const startTime = new Date(now - days * 24 * 60 * 60 * 1000).toISOString();
   const tl = await xGet(`/users/${userId}/tweets?max_results=10&exclude=retweets,replies&tweet.fields=created_at&start_time=${startTime}`);
   const draftItems = store.load('drafts').items;
@@ -151,6 +156,8 @@ async function run(channel) {
     await channel.send('📊 週次レポート：X APIのキーが未設定のため、数字を取れませんでした。');
     return;
   }
+  // 過去の投稿の記録も最新にしておく（週の文案で同じ話を避けるため）。失敗してもレポートは続ける
+  await require('./history').sync().catch(err => console.error('投稿履歴の取り込みエラー:', err.message));
   const snapshot = await fetchSnapshot();
   const history = store.load('metrics').snapshots;
   const text = buildReport(snapshot, history);
@@ -160,4 +167,4 @@ async function run(channel) {
   for (let i = 0; i < text.length; i += 1900) await channel.send(text.slice(i, i + 1900));
 }
 
-module.exports = { run, buildReport, guessType, matchDraft, similarity, fetchSnapshot, checkRecentPosts };
+module.exports = { run, buildReport, guessType, matchDraft, similarity, fetchSnapshot, checkRecentPosts, getUserId, xGet };

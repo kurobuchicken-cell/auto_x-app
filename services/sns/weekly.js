@@ -74,7 +74,8 @@ async function plan(today) {
 - 型ごとの効果を比べたいので、過去6週の本数が少ない型を優先する。過去6週の型ごとの${ctx.tracking ? '投稿' : '文案'}本数：${JSON.stringify(typeCounts(ctx.recentDrafts, ctx.tracking))}
 - 最近のテーマと同じ話を繰り返さない
 - 1本ずつ単体で読める投稿にする。オーナーはどれか1本だけを投稿することもあるので、今週のほかの投稿を前提にしない（「連載第2回」「アンケートで教えて」のように別の投稿に頼らない）
-- 「前回」「連載の続き」として触れてよいのは、下の「投稿済みのテーマ」だけ。未投稿のテーマは、まだ世に出ていない
+- 「前回」「連載の続き」として触れてよいのは、下の「投稿済みのテーマ」と「アカウントの過去の投稿」だけ。未投稿のテーマは、まだ世に出ていない
+- 「アカウントの過去の投稿」と同じ話・同じ切り口（選手紹介、年齢の並び、拠点の紹介、誕生日など）を繰り返さない。続きや新しい角度として触れるのはよい
 - material には、文案を書く人がそれだけで書けるように、使う事実・回答・前回の結果をまとめて書く
 - fact_nos と answer_ids には使った材料の番号を入れる
 
@@ -89,6 +90,9 @@ ${ctx.fresh.map(fmtFact).join('\n') || 'なし'}
 
 ## 選手の回答（未使用）
 ${ctx.answers.map(a => `id=${a.id} ${a.player}：Q「${a.question}」→ A「${a.answer}」`).join('\n') || 'なし'}
+
+## アカウントの過去の投稿（新しい順。冒頭だけ）
+${require('./history').summary() || '（未取得）'}
 
 ## 投稿済みのテーマ（6週以内。「前回」として触れてよい）
 ${ctx.recentDrafts.filter(d => d.postedAt).map(d => `${d.date} [${d.type || '型なし'}] ${d.topic}`).join('\n') || 'なし'}
@@ -110,6 +114,7 @@ function markUsed(post, today) {
 
 async function run(channel, managerId) {
   const today = todayJST();
+  await require('./history').sync().catch(err => console.error('投稿履歴の取り込みエラー:', err.message));
   const posts = await plan(today);
   if (posts.length === 0) throw new Error('今週の計画が0本でした');
 

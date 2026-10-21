@@ -271,6 +271,9 @@ client.on('ready', async () => {
   console.log(`✅ ${client.user.tag} が起動しました`);
   console.log(`📋 SNS管理チャンネル: ${BOT_CHANNEL_ID}`);
   console.log(`💾 データ保存先: ${store.DATA_DIR}`);
+  // 初回は過去1年分の投稿と、その中の結果報告の順位を取り込む（2回目以降は新しい投稿だけ）
+  require('./services/sns/history').sync().then(a => a.length && console.log(`📚 過去の投稿を${a.length}件取り込みました`))
+    .catch(err => console.error('投稿履歴の取り込みエラー:', err.message));
   for (const name of questions.CHANNELS) {
     if (!questions.findChannel(client, name)) console.warn(`⚠️ 選手チャンネル #${name} が見つかりません（Botが参加していない可能性）`);
   }

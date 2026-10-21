@@ -51,9 +51,16 @@ ${text}
   return facts.map(f => ({ ...f, embargoed: f.embargoed || forceEmbargo }));
 }
 
+// 同じ大会・同じ選手の結果は二重に記録しない（過去の投稿からの取り込みと自動の結果取得が重なるため）
+function sameResult(a, b) {
+  const n = x => (x || '').replace(/[\s#♯＃]/g, '').toLowerCase();
+  return a.kind === '結果' && b.kind === '結果' && a.players[0] === b.players[0] && n(a.placement) === n(b.placement)
+    && (n(a.event) === n(b.event) || (a.date && a.date === b.date));
+}
+
 function save(facts, sourceText) {
   return store.update('facts', d => {
-    return facts.map(f => {
+    return facts.filter(f => !d.items.some(x => sameResult(x, f))).map(f => {
       const item = { no: d.nextNo++, ...f, source: sourceText.slice(0, 300), createdAt: todayJST() };
       d.items.push(item);
       return item;
