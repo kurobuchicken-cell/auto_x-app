@@ -1,0 +1,163 @@
+const claude = require('./claude');
+const store = require('./store');
+const drafts = require('./drafts');
+const { PLAYERS, todayJST } = require('./prompt');
+const { gatherContext } = require('./weekly');
+
+const CHANNELS = [...new Set(PLAYERS.map(p => p.channel))];
+const ANSWER_WINDOW_DAYS = 7;
+
+const QUESTION_SCHEMA = {
+  type: 'object',
+  properties: {
+    questions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { channel: { type: 'string', enum: CHANNELS }, text: { type: 'string' } },
+        required: ['channel', 'text'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['questions'],
+  additionalProperties: false,
+};
+
+function playersOf(channelName) {
+  return PLAYERS.filter(p => p.channel === channelName).map(p => p.name);
+}
+
+async function generate(instruction = '', current = null) {
+  const today = todayJST();
+  const ctx = gatherContext(today);
+  const recentQs = store.load('state').sentQuestions.slice(-12).map(q => `${q.channelName}：${q.question}`);
+  const base = current
+    ? `今の質問案：\n${current.map(q => `${q.channel}：${q.text}`).join('\n')}\n\nオーナーからの修正指示：${instruction}\n指示に従って作り直してください。`
+    : '今週の質問を作ってください。';
+  const prompt = `選手に送る「X投稿の材料にするための質問」を、チャンネルごとに1つずつ作ります。
+チャンネル：${CHANNELS.map(c => `${c}（${playersOf(c).join('・')}）`).join('、')}
+
+## 条件
+- スマホで1〜2行で答えられる、答えやすい具体的な質問にする（「意気込みは？」のような抽象的なものは避ける）
+- 答えがそのまま「育成の物語」や「格ゲーを選手の目線で語る」投稿の材料になるものにする
+- 近い大会・直近の結果があれば、それに絡めてよい
+- 双子は2027年1〜3月が受験期。負担にならない軽い質問にし、兄と弟のどちらが答えてもよい形にする
+- 最近した質問と同じことを聞かない
+- 質問文だけを書く（あいさつや前置きは不要）
+
+## 3週間以内の予定
+${ctx.upcoming.map(f => `${f.date} ${f.summary}`).join('\n') || 'なし'}
+## 直近の結果
+${ctx.results.map(f => `${f.summary}（${f.placement}）`).join('\n') || 'なし'}
+## 最近した質問
+${recentQs.join('\n') || 'なし'}
+
+${base}`;
+  const { questions } = await claude.callJSON(prompt, QUESTION_SCHEMA, { effort: 'medium' });
+  return CHANNELS.map(c => questions.find(q => q.channel === c)).filter(Boolean);
+}
+
+async function postProposal(channel, managerId, questions, note = '') {
+  const body = questions.map(q => `**#${q.channel}**\n> ${q.text}`).join('\n\n');
+  const msg = await channel.send(
+    `❓ **選手への質問案${note}** <@${managerId}>\n\n${body}\n\n` +
+    `✅ → 各選手のチャンネルに送る　❌ → 今週は送らない\n` +
+    `直したいときは、このメッセージに「返信」で指示を書いてください（例：サトルの質問をもっと軽く）。`
+  );
+  await msg.react('✅');
+  await msg.react('❌');
+  store.update('state', s => { s.pendingQuestion = { messageId: msg.id, questions, createdAt: new Date().toISOString() }; });
+}
+
+async function propose(channel, managerId) {
+  const questions = await generate();
+  await postProposal(channel, managerId, questions);
+}
+
+async function revise(channel, managerId, instruction) {
+  const pending = store.load('state').pendingQuestion;
+  if (!pending) return false;
+  const questions = await generate(instruction, pending.questions);
+  await postProposal(channel, managerId, questions, '（修正版）');
+  return true;
+}
+
+// 同じ名前のチャンネルが他のカテゴリーにもある（例：アナリティクス提出の#oniki）ため、カテゴリーで絞る
+const PLAYER_CATEGORY = process.env.PLAYER_CHANNEL_CATEGORY || 'STREET FIGHTER';
+
+function findChannel(client, name) {
+  const found = [];
+  for (const guild of client.guilds.cache.values()) {
+    found.push(...guild.channels.cache.filter(c => c.name === name && c.isTextBased() && c.parent?.name === PLAYER_CATEGORY).values());
+  }
+  if (found.length > 1) console.warn(`⚠️ #${name} が「${PLAYER_CATEGORY}」内に${found.length}件あるため送信先を決められません`);
+  return found.length === 1 ? found[0] : null;
+}
+
+async function approve(client, botChannel) {
+  const pending = store.load('state').pendingQuestion;
+  if (!pending) return;
+  store.update('state', s => { s.pendingQuestion = null; });
+
+  const ok = [];
+  const ng = [];
+  for (const q of pending.questions) {
+    const ch = findChannel(client, q.channel);
+    if (!ch) { ng.push(`#${q.channel}（チャンネルが見つからない／Botが入っていない）`); continue; }
+    try {
+      const prefix = q.channel === '双子' ? '（受験勉強の合間に、無理のない範囲で大丈夫です）\n' : '';
+      const sentMsg = await ch.send(`📝 **X投稿用の質問です**（1〜2行の返信で十分です）\n${prefix}\n${q.text}`);
+      store.update('state', s => {
+        s.sentQuestions.push({ channelId: ch.id, messageId: sentMsg.id, channelName: q.channel, question: q.text, sentAt: new Date().toISOString() });
+      });
+      ok.push(`#${q.channel}`);
+    } catch (err) {
+      console.error(`質問送信エラー (${q.channel}):`, err);
+      ng.push(`#${q.channel}（送信エラー：${err.message}）`);
+    }
+  }
+  await botChannel.send(`✅ 送信しました：${ok.join(' ') || 'なし'}${ng.length ? `\n⚠️ 送れなかった：${ng.join('、')}` : ''}`);
+}
+
+async function cancel(botChannel) {
+  store.update('state', s => { s.pendingQuestion = null; });
+  await botChannel.send('今週の質問は送りません。');
+}
+
+// 質問を送ったチャンネルで、送ってから一定期間内に選手が書いたものを回答として扱う
+function activeQuestionFor(channelId, now = Date.now()) {
+  const limit = now - ANSWER_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  return store.load('state').sentQuestions
+    .filter(q => q.channelId === channelId && Date.parse(q.sentAt) >= limit)
+    .pop() || null;
+}
+
+// 選手チャンネルにはスタッフも書き込むため、質問への「返信」か、スタッフ以外の書き込みだけを回答とみなす
+async function onPlayerMessage(message, botChannel, staffIds = []) {
+  const q = activeQuestionFor(message.channelId);
+  if (!q) return false;
+  const isReply = q.messageId && message.reference?.messageId === q.messageId;
+  if (!isReply && staffIds.includes(message.author.id)) return false;
+  const answer = message.content.trim();
+  if (!answer) return false;
+
+  const author = message.member?.displayName || message.author.username;
+  store.update('answers', d => {
+    d.items.push({ id: message.id, player: q.channelName, author, question: q.question, answer, at: new Date().toISOString(), usedAt: todayJST() });
+  });
+
+  await drafts.draftAndSend(
+    botChannel,
+    `${playersOf(q.channelName).join('・')}への質問「${q.question}」に、${author}がこう答えた：「${answer}」`,
+    {
+      type: '選手の声',
+      source: 'answer',
+      topic: `${q.channelName}の回答：${answer.slice(0, 40)}`,
+      header: `💬 **#${q.channelName} から回答がありました**\nQ：${q.question}\nA：${answer}`,
+    }
+  );
+  return true;
+}
+
+module.exports = { propose, revise, approve, cancel, onPlayerMessage, activeQuestionFor, findChannel, CHANNELS };

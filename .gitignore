@@ -4,5 +4,6 @@
 node_modules/
 /logs/
 /tokens/
+/data/
 
 .claude/settings.local.json

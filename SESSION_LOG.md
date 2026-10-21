@@ -148,3 +148,23 @@
   - 自己紹介文は、既存の問い合わせ先（CONTACT US → northeption.com/contact）を残すため、160字に収まるよう縮めた。場所は「秋葉原」に変更
   - 作業用のChromeのスクリプト実行を自動許可にするため、`.claude/settings.local.json` に `Bash(node C:/Users/kin/AppData/Local/Temp/claude/c--dev-auto-x-app/*)` を追加した（gitignore済み）
   - 変更前の基準値：直近7日のプロフィールへのアクセス121件。1〜2週間後に比べる
+
+## auto_x-app-bot-01（2026-10-21）
+- 作業環境：ノートPC
+- やったこと：Botを作り替えた。日付カレンダーと確認待ちを廃止し、型ごとの週次文案・選手への質問・大会結果の物語化・X APIでの週次レポートにした。SYSTEM_PROMPTも更新した
+- 完了した状態：
+  - 実装済み（index.js、services/sns/）。schedule.jsonは削除
+  - 仕様書_auto_x-app.html を新規作成（x_仕様書.htmlは残す）。CLAUDE.md・HISTORY.mdも更新
+  - 模擬実行の32項目はすべて成功（テスト用スクリプトはスクラッチパッド内で、リポジトリ外）
+  - 本物のClaude APIで、VMの/tmpを使って確認した（記録の抽出、前回と比べた結果の文案、週の計画で未公開を除外、質問案）。/tmpは削除済み
+  - Botを選手チャンネル4つに参加させた（オーナー）。STREET FIGHTERカテゴリーで権限OKを確認。「アナリティクス提出」に同名の#onikiがあるため、送り先はカテゴリーで絞った
+  - 注意：「未公開：A。あとB」のように1つの書き込みに混ぜると、Bも解禁前の扱いになる（安全側）。その場合は「解禁 番号」で外す
+  - ノートPCの.envのDiscordトークン・Anthropicキーは無効（VMのものが有効）
+  - オーナー決定をCLAUDE.mdに記録：X APIは読み取りだけに使う／スマホとDiscordで回す（VS Codeに頼らない）／TOPANGAは使わない
+- 残課題・次にやること：
+  - コミット・push → VMへ反映（git pull、npm ci、pm2 restart）
+  - オーナー：X開発者アカウントの登録とクレジットのチャージ → Claudeが X_BEARER_TOKEN をVMの.envに設定する
+  - オーナー：Botを #oniki #サトル #双子 #あしゅまる に参加させる
+  - 未公開のU22トパチャン招待（サトル・兄）は、反映後にsns-botへ「未公開：〜」と書けば記録される
+  - 1〜2週間後：プロフィール変更の効果を確認（アクセス数は変更前が7日で121件）
+- 触ったファイル：index.js、services/sns/*.js、schedule.json（削除）、仕様書_auto_x-app.html、.gitignore、.env.example、CLAUDE.md、HISTORY.md、SESSION_LOG.md

@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>仕様書 auto_x-app</title>
+<style>
+  body { font-family: "Hiragino Sans", "Yu Gothic", sans-serif; max-width: 900px; margin: 0 auto; padding: 16px; line-height: 1.7; color: #222; background: #fff; }
+  h1 { border-bottom: 3px solid #333; padding-bottom: 4px; }
+  h2 { border-left: 6px solid #555; padding-left: 8px; margin-top: 2em; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 14px; }
+  th, td { border: 1px solid #bbb; padding: 6px 8px; vertical-align: top; text-align: left; }
+  th { background: #f0f0f0; }
+  code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }
+  .note { background: #fff8e1; border: 1px solid #f0d080; padding: 8px 12px; border-radius: 4px; }
+  .ok { color: #1a7f37; font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>仕様書：NORTHEPTION SNS半自動投稿Bot（auto_x-app）</h1>
+<p>最終更新：2026-10-21（auto_x-app-bot-01で全面改修）。旧仕様（日付固定カレンダー方式）は <code>x_仕様書.html</code> に残しているが、現在の動作とは一致しない。</p>
+
+<h2>1. 目的と前提</h2>
+<ul>
+  <li>目的は <b>Xのフォロワーを増やすこと</b>。文案の量や投稿回数は手段にすぎない。</li>
+  <li>打ち出し方は「育成の物語 × 格ゲーの話題を選手の目線で」。結果報告は、前回からの変化を物語として書く。</li>
+  <li>投稿は人間が手動でコピペする（全自動投稿はしない）。X APIは<b>数字の読み取りだけ</b>に使う。</li>
+  <li><b>Discordを窓口にし、スマホだけで全部の操作ができる</b>こと。PC・VS Code・ログインの維持に頼らない。</li>
+  <li>確認待ちで止まる仕組みは作らない。返事がなくても次の週は必ず動く。</li>
+</ul>
+
+<h2>2. 全体の流れ</h2>
+<table>
+<tr><th>いつ</th><th>何が起きるか</th><th>オーナーの操作</th></tr>
+<tr><td>毎週月曜 7:00</td><td>週次レポート（フォロワー数・前回比・投稿ごとの数字・型ごとの比較）</td><td>読むだけ</td></tr>
+<tr><td>毎週月曜 8:00</td><td>今週の文案を3本前後（2〜4本）。1本ごとに型を付けて、各3パターン</td><td>好きな日に選んでXに投稿（使わない分は放置でよい）</td></tr>
+<tr><td>毎週月曜 9:00</td><td>選手への質問案（チャンネルごとに1問）</td><td>✅で送信／❌で今週は送らない／返信で修正指示。<b>放置しても何も止まらない</b></td></tr>
+<tr><td>随時</td><td>sns-botに何か書く → 記録して3パターン返す</td><td>ネタ・お知らせ・予定・結果を雑に書くだけ</td></tr>
+<tr><td>随時</td><td>選手が質問に答える → 回答を記録し、「選手の声」の文案を3パターン</td><td>なし</td></tr>
+</table>
+<p>予定時刻にBotが止まっていた場合も、その週のうちに起動した時点で実行される（例：月曜に止まっていて木曜に復旧 → 木曜に3つとも1回ずつ）。</p>
+
+<h2>3. 文案の型</h2>
+<table>
+<tr><th>型</th><th>中身</th><th>使われる場面</th></tr>
+<tr><td>選手の声</td><td>選手の回答・発言をもとにする</td><td>選手の回答が届いたとき（即時）。週の文案では未使用の回答があるときだけ</td></tr>
+<tr><td>格ゲー×若手の目線</td><td>SF6・格ゲーの話題を選手の目線で語る。知らない事実は【要確認】にする</td><td>週の文案</td></tr>
+<tr><td>数字・参加型</td><td>アンケート案・クイズ・予想など、ファンが答えたくなるもの</td><td>週の文案</td></tr>
+<tr><td>大会の物語化</td><td>予定・結果を前回からの変化と次への続きとして描く</td><td>3週間以内に大会がある週／直近の結果があるとき（週の文案に必ず1本）。結果を書き込んだとき（即時）</td></tr>
+</table>
+<p>週の文案の型は、過去6週の本数が少ない型を優先する（型ごとの効果を比べるため）。</p>
+
+<h2>4. sns-botでの操作（すべてスマホ可）</h2>
+<table>
+<tr><th>書くこと</th><th>動き</th></tr>
+<tr><td>何でも（ネタ・お知らせ・大会の予定・結果）</td><td>Claudeが内容を読み取り「予定／結果／お知らせ／ネタ」として番号付きで記録 → 3パターン返す。記録に失敗しても3パターンは必ず返す</td></tr>
+<tr><td>結果を含む文（例：WW#5 オニキ ベスト8）</td><td>その選手の過去の結果（最大3件）を添えて「大会の物語化」の文案。過去の記録がなければ比較は作らない</td></tr>
+<tr><td>「未公開：〜」など</td><td>🔒解禁前として記録。文案に「解禁前・まだ投稿しない」の警告を付け、週の文案の材料から外す</td></tr>
+<tr><td><code>今週の文案</code></td><td>今週の文案を今すぐ作る（その週の月曜8時の自動実行は行わない）</td></tr>
+<tr><td><code>質問案</code></td><td>選手への質問案を今すぐ作る（その週の月曜9時の自動実行は行わない）</td></tr>
+<tr><td><code>レポート</code></td><td>数字レポートを今すぐ出す（数字の記録も1回分増える）</td></tr>
+<tr><td><code>記録</code></td><td>記録の新しい15件（🔒は未公開）</td></tr>
+<tr><td><code>解禁</code> ／ <code>解禁 12</code></td><td>未公開の一覧 ／ #12を公開扱いにして週の文案に使えるようにする</td></tr>
+<tr><td><code>削除 12</code></td><td>#12の記録を消す（誤った記録の訂正用）</td></tr>
+<tr><td><code>使い方</code></td><td>この一覧を表示</td></tr>
+<tr><td>質問案のメッセージへの「返信」</td><td>修正指示として扱い、修正版の質問案を出す（前の案の✅は無効になる）</td></tr>
+</table>
+<p>コマンドは「その言葉だけ」の書き込みのときだけ反応する（「レポート作ったよ」は普通のネタとして扱う）。</p>
+
+<h2>5. 選手への質問</h2>
+<ul>
+  <li>送り先は選手ごとのDiscordチャンネル：<code>#oniki</code>／<code>#サトル</code>／<code>#双子</code>（兄弟で1つ）／<code>#あしゅまる</code>。チャンネルは「STREET FIGHTER」カテゴリーの中から名前で探す（「アナリティクス提出」カテゴリーにも同名の#onikiがあるため。カテゴリー名は <code>PLAYER_CHANNEL_CATEGORY</code> で変更可）。同じカテゴリーに同名が2つ以上あれば送らずに知らせる。</li>
+  <li><b>Botをこれらのチャンネルに参加させておく必要がある</b>（未参加のチャンネルは送信時に「送れなかった」と知らせる。起動ログにも警告が出る）。</li>
+  <li>オーナー（<code>DISCORD_MANAGER_ID</code>）の✅でのみ送る。双子には「受験勉強の合間に、無理のない範囲で」と添える。</li>
+  <li>回答として扱うもの：送信から7日以内に、そのチャンネルで書かれたもののうち、質問への「返信」、またはスタッフ（オーナーと <code>DISCORD_STAFF_IDS</code>）以外の書き込み。</li>
+</ul>
+
+<h2>6. 週次レポート（X API）</h2>
+<ul>
+  <li>使うAPI：<code>GET /2/users/by/username/NORTHEPTION</code>（フォロワー数）と <code>GET /2/users/:id/tweets</code>（直近14日の自分の投稿・最大20件、表示回数・いいね・RT・返信）。外部への通信先は <code>api.x.com</code> のみで、読み取りだけ。</li>
+  <li>料金：従量課金（投稿の読み取り1件あたり約$0.005）。週1回で月数十円の見込み。</li>
+  <li>投稿ごとのフォロー数はAPIで取れないため、<b>週ごとのフォロワー純増と、その週に出した型</b>を並べて比べる。</li>
+  <li>投稿の型は、Botが出した文案と文字の並びの近さ（一致度0.5以上）で推定する。手で直した投稿も拾える。Bot以外の投稿は「型不明」。</li>
+  <li>キーが未設定のときは「未設定のため取れませんでした」と知らせて、その週は終わる。</li>
+</ul>
+
+<h2>7. プロンプト（SYSTEM_PROMPT）</h2>
+<ul>
+  <li>モデル：<code>claude-opus-5-5</code>。安全判定で断られた場合はAPI側で自動的に別モデルへ切り替える（<code>fallbacks: "default"</code>）。</li>
+  <li>年齢は生年月日から毎回計算する（誕生日が来たら自動で上がる）。年齢を釣りに使う書き方は禁止。</li>
+  <li>段落ごと（導入／選手ごと／締め／ハッシュタグの前）に空白行を入れる。1投稿140字以内目安。</li>
+  <li>プロフィール・固定ポスト（5人の成長と挑戦を追うアカウント）の続きとして読める書き方にする。拠点は秋葉原。</li>
+  <li>TOPANGA（第7期）など古い大会情報はプロンプトに入れない。大会の情報はDiscordで記録したものだけを使う。</li>
+  <li>💛の除去と <code>#NthWIN #SF6</code> の付与は、生成後にコードでも必ず保証する。</li>
+</ul>
+
+<h2>8. データの保存</h2>
+<p>VM上の <code>data/</code>（gitの管理外。未公開情報をGitHubに載せないため）。置き場所は <code>SNS_DATA_DIR</code> で変更可。書き込みは一時ファイル経由で置き換えるため、途中で落ちても壊れたJSONは残らない。</p>
+<table>
+<tr><th>ファイル</th><th>中身</th></tr>
+<tr><td>state.json</td><td>週ごとの実行済みの印・試行回数、確認待ちの質問案、送った質問</td></tr>
+<tr><td>facts.json</td><td>記録（予定・結果・お知らせ・ネタ、未公開フラグ、使用済みの印）</td></tr>
+<tr><td>drafts.json</td><td>出した文案（型・テーマ・本文）。レポートの型推定に使う</td></tr>
+<tr><td>answers.json</td><td>選手の回答</td></tr>
+<tr><td>metrics.json</td><td>週ごとのフォロワー数と投稿の数字</td></tr>
+</table>
+
+<h2>9. 止まりうる条件と対策（模擬実行で確認済み）</h2>
+<p>Claude・Discord・X APIを偽物に差し替え、時刻と状態を変えた模擬実行で全項目を確認した（2026-10-21、32項目すべて<span class="ok">成功</span>）。</p>
+<table>
+<tr><th>条件</th><th>動き</th><th>結果</th></tr>
+<tr><td>月曜の予定時刻より前</td><td>何もしない</td><td class="ok">確認済み</td></tr>
+<tr><td>月曜0時台（UTCではまだ日曜）</td><td>月曜の週として扱う</td><td class="ok">確認済み</td></tr>
+<tr><td>同じ週に再度チェックが来る</td><td>実行済みの印で二重送信しない</td><td class="ok">確認済み</td></tr>
+<tr><td>実行中に次の1分のチェックが来る</td><td>実行中は飛ばす</td><td class="ok">確認済み</td></tr>
+<tr><td>月曜にBotが止まっていた</td><td>同じ週のうちに起動した時点で実行</td><td class="ok">確認済み</td></tr>
+<tr><td>Claude APIが失敗</td><td>30分おきに最大3回試す → 3回失敗でオーナーに通知し、その週は終了。翌週は通常どおり動く</td><td class="ok">確認済み</td></tr>
+<tr><td>週の文案のうち1本だけ失敗</td><td>残りは出して、失敗した1本を知らせる</td><td class="ok">確認済み</td></tr>
+<tr><td>書き込みからの記録（抽出）が失敗</td><td>記録は飛ばして、3パターンは返す</td><td class="ok">確認済み</td></tr>
+<tr><td>文案の生成が失敗</td><td>「処理に失敗しました」と知らせる（無言で終わらない）</td><td class="ok">確認済み</td></tr>
+<tr><td>Claudeのパターン数が3未満</td><td>1回作り直す</td><td>コードで対応</td></tr>
+<tr><td>状態ファイルが壊れている</td><td>初期値で動き続ける（その週の自動実行がもう一度走る可能性はある）</td><td class="ok">確認済み</td></tr>
+<tr><td>質問案に返事がない</td><td>何も止まらない。翌週は新しい案が出る</td><td>設計で対応</td></tr>
+<tr><td>古い質問案に✅／オーナー以外の✅／✅の2度押し</td><td>送らない／送らない／1回だけ送る</td><td class="ok">確認済み</td></tr>
+<tr><td>選手チャンネルが見つからない（Bot未参加）</td><td>送れたチャンネルだけ送り、送れなかったものを知らせる</td><td class="ok">確認済み</td></tr>
+<tr><td>選手チャンネルでスタッフが連絡を書く</td><td>回答にしない</td><td class="ok">確認済み</td></tr>
+<tr><td>X APIのキー未設定</td><td>未設定と知らせて、その週は終了</td><td class="ok">確認済み</td></tr>
+<tr><td>X APIがエラー（残高切れなど）</td><td>失敗として知らせる（自動実行では最大3回）</td><td class="ok">確認済み</td></tr>
+<tr><td>未公開の情報</td><td>週の文案の材料に入れない。解禁後に入る</td><td class="ok">確認済み</td></tr>
+</table>
+<div class="note">本物のClaude API・Discord・X APIでの確認は、Oracle VM上で行う（ローカルのAnthropicキーは無効のため）。結果はHISTORY.md・SESSION_LOG.mdに記録する。</div>
+
+<h2>10. 環境変数</h2>
+<table>
+<tr><th>名前</th><th>用途</th></tr>
+<tr><td>DISCORD_BOT_TOKEN / DISCORD_BOT_CHANNEL_ID / DISCORD_MANAGER_ID</td><td>Bot・sns-botチャンネル・オーナー</td></tr>
+<tr><td>DISCORD_STAFF_IDS</td><td>（任意）回答として扱わないスタッフのユーザーID（カンマ区切り）</td></tr>
+<tr><td>ANTHROPIC_API_KEY</td><td>Claude API</td></tr>
+<tr><td>X_BEARER_TOKEN / X_USERNAME</td><td>X API（読み取り専用）／対象アカウント（既定はNORTHEPTION）</td></tr>
+<tr><td>SNS_DATA_DIR</td><td>（任意）データの保存先。既定はプロジェクト直下の <code>data/</code></td></tr>
+<tr><td>GMAIL_* / SLACK_* / CHATWORK_* / MACP_*</td><td>メールチェック機能（今回は変更なし）</td></tr>
+</table>
+
+<h2>11. ファイル構成</h2>
+<table>
+<tr><th>ファイル</th><th>役割</th></tr>
+<tr><td>index.js</td><td>Discordの受け口、週ごとの自動実行、メールチェックの定期実行</td></tr>
+<tr><td>services/sns/prompt.js</td><td>選手情報・型・SYSTEM_PROMPT・年齢計算</td></tr>
+<tr><td>services/sns/claude.js</td><td>Claude APIの呼び出し（JSON出力）</td></tr>
+<tr><td>services/sns/drafts.js</td><td>3パターンの生成・ルールの保証・送信・記録</td></tr>
+<tr><td>services/sns/facts.js</td><td>書き込みからの記録の抽出・未公開・過去の結果</td></tr>
+<tr><td>services/sns/weekly.js</td><td>週の文案の計画と送信</td></tr>
+<tr><td>services/sns/questions.js</td><td>質問案・承認・送信・回答の取り込み</td></tr>
+<tr><td>services/sns/report.js</td><td>X APIの取得・型の推定・レポート</td></tr>
+<tr><td>services/sns/store.js</td><td>data/ への保存</td></tr>
+</table>
+
+<h2>12. 運用</h2>
+<ul>
+  <li>本番：Oracle VM（<code>~/apps/northeption-sns-bot</code>）、<code>git pull</code> → <code>npm ci --omit=dev</code> → <code>pm2 restart northeption-sns-bot</code>。</li>
+  <li>オーナーの初回作業：X開発者アカウントの登録とクレジットのチャージ、Botを選手チャンネル4つに参加させる。</li>
+</ul>
+</body>
+</html>
