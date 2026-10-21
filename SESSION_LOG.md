@@ -173,7 +173,7 @@
   - オーナー指示「判断させる選択肢は少なく、Claudeが決めて進める」をCLAUDE.mdに記録した
   - 3861cbdをVMに反映した。起動・毎日の大会チェック（記録がまだ無いので何もしない）が動くことをログで確認
 - 残課題（追加）：
-  - start.ggのAPIキー（無料）をオーナーが発行し、VMの.envに STARTGG_TOKEN として設定する。これで選手ごとのプール・順位が自動で取れる。実際の応答での確認も、設定後に行う
+  - （完了）start.ggのAPIキーをVMの.envに設定し、WW#4で5人分のプール・URL・順位・参加人数が正解と一致することを確認した。初戦のプールを選ぶ修正などは未反映（次の反映で入る）
   - Perplexityを使う場合は、APIキー（有料）を PERPLEXITY_API_KEY に設定する
   - X APIのキー（X_BEARER_TOKEN）。これで週次レポートと投稿の追跡・お手本が動く
 - 触ったファイル：index.js、services/sns/*.js（research・startgg・eventsを追加）、schedule.json（削除）、仕様書_auto_x-app.html、.gitignore、.env.example、CLAUDE.md、HISTORY.md、SESSION_LOG.md

@@ -129,7 +129,7 @@
 </table>
 
 <h2>9. 止まりうる条件と対策（模擬実行で確認済み）</h2>
-<p>Claude・Discord・X APIを偽物に差し替え、時刻と状態を変えた模擬実行で全項目を確認した（2026-10-21、44項目すべて<span class="ok">成功</span>）。</p>
+<p>Claude・Discord・X APIを偽物に差し替え、時刻と状態を変えた模擬実行で全項目を確認した（2026-10-21、45項目すべて<span class="ok">成功</span>）。</p>
 <table>
 <tr><th>条件</th><th>動き</th><th>結果</th></tr>
 <tr><td>月曜の予定時刻より前</td><td>何もしない</td><td class="ok">確認済み</td></tr>
@@ -157,7 +157,7 @@
 <tr><td>オーナーが結果を書いた大会</td><td>自動の結果報告は出さない（二重防止）</td><td class="ok">確認済み</td></tr>
 <tr><td>大会系の文案に #SF6 が入る／#NthWIN が無い</td><td>コードで #SF6 を外し #NthWIN を付ける</td><td class="ok">確認済み</td></tr>
 <tr><td>投稿されなかった文案</td><td>テーマ・材料は1週間後に候補へ戻る（数字が取れている場合）</td><td class="ok">確認済み</td></tr>
-<tr><td>start.gg APIの応答</td><td>選手ごとのプール・URL・順位・参加人数で上書き（偽の応答で確認。本物は<code>STARTGG_TOKEN</code>の設定後に確認）</td><td>一部確認</td></tr>
+<tr><td>start.gg APIの応答</td><td>選手ごとのプール・URL・順位・参加人数で上書き。勝ち上がった選手は初戦のプールを選ぶ。登録名が一致しない人は使わない（別人防止）。SF6の部門が複数あれば参加人数最多を選ぶ。本物のAPIでWW#4の5人分（プール・URL・順位・1,476名）が正解と一致</td><td class="ok">確認済み</td></tr>
 </table>
 <div class="note">本物のClaude API・Discord・X APIでの確認は、Oracle VM上で行う（ローカルのAnthropicキーは無効のため）。結果はHISTORY.md・SESSION_LOG.mdに記録する。</div>
 

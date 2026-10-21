@@ -28,7 +28,7 @@ const EVENTS_Q = `query($slug: String!) {
 const ENTRANT_Q = `query($eventId: ID!, $name: String!) {
   event(id: $eventId) {
     entrants(query: { page: 1, perPage: 10, filter: { name: $name } }) {
-      nodes { name standing { placement } seeds { phaseGroup { id displayIdentifier phase { id name } } } }
+      nodes { name standing { placement } seeds { phaseGroup { id displayIdentifier phase { id name phaseOrder } } } }
     }
   }
 }`;
@@ -41,16 +41,21 @@ async function lookup(urls, startggNames) {
 
   const { tournament } = await gql(EVENTS_Q, { slug });
   if (!tournament) return null;
-  const event = tournament.events.find(e => /street fighter 6/i.test(`${e.videogame?.name} ${e.name}`)) || tournament.events[0];
+  // サイド大会などSF6の部門が複数あるときは、参加人数が最も多い本戦を選ぶ
+  const sf6 = tournament.events.filter(e => /street fighter 6/i.test(`${e.videogame?.name} ${e.name}`));
+  const event = (sf6.length ? sf6 : tournament.events).sort((a, b) => (b.numEntrants || 0) - (a.numEntrants || 0))[0];
   if (!event) return null;
 
   const players = [];
   for (const [player, name] of Object.entries(startggNames)) {
     const data = await gql(ENTRANT_Q, { eventId: event.id, name });
-    const node = data.event.entrants.nodes.find(n => n.name === name) || data.event.entrants.nodes[0];
+    // 名前検索は部分一致のため、登録名が一致しない人は別人の可能性があり使わない（【要確認】で残る）
+    const norm = x => x.replace(/\s+/g, '').toLowerCase();
+    const node = data.event.entrants.nodes.find(n => norm(n.name) === norm(name));
     if (!node) continue;
-    // 最初のフェーズ（プール）を、その選手のトーナメント表とする
-    const seed = (node.seeds || []).find(s => s.phaseGroup) || null;
+    // 勝ち上がった選手は後のフェーズにも記録があるため、最初のフェーズ（初戦のプール）を選ぶ
+    const seed = (node.seeds || []).filter(s => s.phaseGroup)
+      .sort((a, b) => (a.phaseGroup.phase.phaseOrder ?? 99) - (b.phaseGroup.phase.phaseOrder ?? 99))[0] || null;
     const pg = seed?.phaseGroup;
     players.push({
       player,
