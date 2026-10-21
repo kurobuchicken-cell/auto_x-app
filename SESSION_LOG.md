@@ -179,5 +179,6 @@
   - （完了）a6c8d95（start.ggの修正）をVMに反映した
   - STARTGG_TOKEN・X_BEARER_TOKENはVMの.envにだけある（ノートPCの.env・dev-configには無い）。VMを作り直すときは、キーを発行し直して同じ手順で設定する
   - オーナー：sns-botに「11/29 WW#5 全員出場」を書き込む
-  - オーナー指示で、毎日18時のリマインド（質問案の✅／❌、大会の告知・結果の未投稿、長く未公開の記録）を追加した
+  - オーナー指示で、毎日18時のリマインド（質問案の✅／❌、大会の告知・結果の未投稿、長く未公開の記録）を追加した。5446d27をVMに反映済み
+  - 次回やること：月曜（10/26）の自動実行（7時レポート・8時文案・9時質問案）と、18時のリマインドが正しく届いたかをVMのログとsns-botで確認する
 - 触ったファイル：index.js、services/sns/*.js（research・startgg・eventsを追加）、schedule.json（削除）、仕様書_auto_x-app.html、.gitignore、.env.example、CLAUDE.md、HISTORY.md、SESSION_LOG.md
