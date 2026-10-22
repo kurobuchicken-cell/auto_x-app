@@ -229,3 +229,4 @@
   - 10/22 18時：オニキの回答の文案とWW#5の記録の知らせが届くか。10/23 18時：あしゅまるの文案
   - 未対応：インフルエンサーの投稿への反応案（自動いいねはしない方向で提案済み）、MA案件メールチェックのエラー（formatShortDate・JSON・ChatWork 429）
 - 触ったファイル：index.js、services/sns/news.js（新規）・startgg.js・events.js・research.js・reminders.js・weekly.js・questions.js・drafts.js・store.js、仕様書_auto_x-app.html、CLAUDE.md、HISTORY.md、SESSION_LOG.md
+- 追記（同日・終了前）：インフルエンサーの投稿に反応する案はオーナー判断で廃棄（CLAUDE.mdに記録、929aa98）。MA案件メールチェックのエラーは、2026-08-21に止めた機能の古いログが残っていただけで対応不要（今のメールチェック＝info@・contact@→Slackは正常）。未対応の残課題はなし
