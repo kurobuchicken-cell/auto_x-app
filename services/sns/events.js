@@ -125,6 +125,48 @@ async function runDaily(channel, managerId, now = Date.now()) {
   }
 }
 
+const DISCOVER_DAYS_AHEAD = 60;
+
+// 選手のstart.ggの出場登録から大会の予定を記録する（オーナーが書き込まなくても告知・結果報告が動くように。2026-10-22オーナー指示）。
+// オーナーが書いた予定と同じ大会なら、新しく作らずにstart.ggの情報を足す。未公開の予定には触らない
+async function discoverFromStartgg(today = todayJST()) {
+  const startgg = require('./startgg');
+  const found = await startgg.upcomingEntries(today, addDays(today, DISCOVER_DAYS_AHEAD));
+  if (!found) return [];
+  return recordDiscovered(found, 'start.gg', today);
+}
+
+// entries：{ name, date, url, players, slug? }。label は記録の出どころ（start.gg／ウェブ検索）
+function recordDiscovered(found, label, today = todayJST()) {
+  const { similarity } = require('./report');
+  const added = [];
+  store.update('facts', d => {
+    for (const e of found) {
+      // オーナーの書き方（「WW#5」）とstart.ggの名前（「World Warrior 2026 - Japan 5」）は一致しないことが多いので、
+      // 日付が1日以内なら同じ大会とみなす。日をまたぐ大会では開始日がずれることがある
+      const days = f => (f.date ? Math.abs(Date.parse(f.date) - Date.parse(e.date)) / 864e5 : Infinity);
+      const same = d.items.find(f => f.kind === '予定' && ((e.slug && f.startggSlug === e.slug)
+        || (!f.startggSlug && days(f) <= 1)
+        || (!f.startggSlug && f.event && days(f) <= 3 && similarity(f.event, e.name) >= 0.5)));
+      if (same) {
+        if (same.embargoed) continue;
+        if (e.slug) same.startggSlug = e.slug;
+        same.players = [...new Set([...(same.players || []), ...e.players])];
+        continue;
+      }
+      const item = {
+        no: d.nextNo++, kind: '予定', summary: `${e.date} ${e.name}（${label}で出場を確認：${e.players.join('・')}）`,
+        date: e.date, event: e.name, players: e.players, placement: '', embargoed: false,
+        ...(e.slug ? { startggSlug: e.slug } : {}), source: `${label}自動：${e.url}`, createdAt: today, discoveredAt: today,
+      };
+      d.items.push(item);
+      added.push(item);
+    }
+  });
+  for (const f of added) console.log(`📅 ${label}で大会を見つけて記録した：#${f.no} ${f.summary}`);
+  return added;
+}
+
 // オーナーが結果を書き込んだ大会は、自動の結果報告を出さない（二重にしないため）
 function markReported(resultFacts) {
   const { similarity } = require('./report');
@@ -140,4 +182,4 @@ function markReported(resultFacts) {
   });
 }
 
-module.exports = { runDaily, announce, report, postTimeHint, markReported };
+module.exports = { runDaily, announce, report, postTimeHint, markReported, discoverFromStartgg, recordDiscovered };

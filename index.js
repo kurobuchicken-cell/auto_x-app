@@ -11,6 +11,7 @@ const report = require('./services/sns/report');
 const research = require('./services/sns/research');
 const events = require('./services/sns/events');
 const reminders = require('./services/sns/reminders');
+const news = require('./services/sns/news');
 
 const client = new Client({
   intents: [
@@ -30,6 +31,8 @@ const HELP_TEXT = `📖 **使い方**（何を書いても文案を3パターン
 ・ネタ・お知らせ・大会予定・結果は、そのまま書けば記録して文案を作ります
 ・大会の予定・結果は、ウェブとstart.ggで裏を取ってから文案にします
 ・大会の3日前〜前日に告知文、終わった翌日に結果報告文を自動で出します
+・選手がstart.ggで出場登録した大会は、毎日10時に自動で見つけて記録します（書き込み不要）
+・毎週月曜にSF6のニュースを拾い、週の文案の材料にします
 ・週の文案と選手の回答から作った文案は在庫にためて、毎日18時に1本ずつ送ります（対応待ちのお知らせも同じ通知にまとめます）
 ・まだ出せない情報は「未公開：〜」と書く → 解禁前として扱い、検索にも週の文案にも使いません
 ・「今週の文案」→ 今週の文案を今すぐ作って在庫に入れる
@@ -54,6 +57,8 @@ function weekKey(now = Date.now()) {
 }
 
 const WEEKLY_JOBS = [
+  // 週の文案（8時）より前に、材料になるニュースを拾っておく
+  { key: 'news', hour: 6, label: 'SF6のニュース', run: () => news.run() },
   { key: 'report', hour: 7, label: '週次レポート', run: ch => report.run(ch, MANAGER_ID) },
   { key: 'drafts', hour: 8, label: '今週の文案', run: ch => weekly.run(ch, MANAGER_ID) },
   { key: 'questions', hour: 9, label: '選手への質問案', run: ch => questions.propose(ch, MANAGER_ID) },
@@ -105,6 +110,7 @@ async function runDueWeeklyJobs(now = Date.now()) {
 // ── 毎日の大会チェック（告知・結果報告） ─────────────────────
 
 const DAILY_JOBS = [
+  { key: 'discover', hour: 10, run: (ch, now) => events.discoverFromStartgg(require('./services/sns/prompt').todayJST(now)) },
   { key: 'events', hour: 10, run: (ch, now) => events.runDaily(ch, MANAGER_ID, now) },
   { key: 'reminders', hour: 18, run: (ch, now) => reminders.runDaily(ch, MANAGER_ID, now) },
 ];

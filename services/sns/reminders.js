@@ -44,7 +44,12 @@ async function collect(now) {
     }
   }
 
-  return items.filter(i => remindCount(i.key) < MAX_REMINDS);
+  // Botが自分で見つけて記録した大会は、告知が自動で出ることを伝えるため一度だけ知らせる
+  for (const f of store.load('facts').items.filter(x => x.discoveredAt && x.discoveredAt >= addDays(today, -6))) {
+    items.push({ key: `found:${f.no}`, max: 1, text: `📅 大会を見つけて記録しました：#${f.no} ${f.summary}（告知は3日前〜前日に自動で出します。違っていれば「削除 ${f.no}」）` });
+  }
+
+  return items.filter(i => remindCount(i.key) < (i.max || MAX_REMINDS));
 }
 
 // 大会の告知・結果報告を出した日は、投稿が1日に重ならないよう在庫からは出さない

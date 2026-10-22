@@ -10,6 +10,7 @@ const DEFAULTS = {
   answers: { items: [] },
   metrics: { snapshots: [] },
   posts: { items: [] },
+  news: { items: [] },
 };
 
 function filePath(name) {

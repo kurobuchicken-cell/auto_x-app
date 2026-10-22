@@ -87,7 +87,7 @@ async function researchEvent(fact, mode) {
 
 ## 調べる大会
 ${fact.event || '（大会名不明）'}／記録上の日付：${fact.date || '不明'}／メモ：${fact.summary}
-## 対象の選手
+${fact.startggSlug ? `start.ggの大会ページ（ここを最優先で確かめる）：https://www.start.gg/${fact.startggSlug}\n` : ''}## 対象の選手
 ${targets}
 ## 調べること
 ${goal}
@@ -104,14 +104,14 @@ ${await perplexityHints(query)}
 - 大会自体が見つからなければ found を false にする`;
 
   const result = await claude.researchJSON(prompt, SCHEMA);
-  return mergeStartgg(result, players);
+  return mergeStartgg(result, players, fact);
 }
 
 // start.ggのAPIで取れた選手ごとの情報で上書きする（ウェブ検索より確か）
-async function mergeStartgg(result, players) {
+async function mergeStartgg(result, players, fact = {}) {
   try {
     const names = Object.fromEntries((players.length ? players : PLAYER_NAMES).map(p => [p, STARTGG_NAMES[p]]));
-    const sg = await startgg.lookup([result.bracket_url, ...result.sources], names);
+    const sg = await startgg.lookup([fact.startggSlug ? `https://www.start.gg/${fact.startggSlug}` : '', result.bracket_url, ...result.sources], names);
     if (!sg) return result;
     for (const p of sg.players) {
       const i = result.players.findIndex(x => x.player === p.player);

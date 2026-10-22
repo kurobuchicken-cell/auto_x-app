@@ -22,9 +22,10 @@ const PLAN_SCHEMA = {
           material: { type: 'string' },
           fact_nos: { type: 'array', items: { type: 'integer' } },
           answer_ids: { type: 'array', items: { type: 'string' } },
+          news_ids: { type: 'array', items: { type: 'string' } },
           deadline: { type: 'string' },
         },
-        required: ['type', 'topic', 'material', 'fact_nos', 'answer_ids', 'deadline'],
+        required: ['type', 'topic', 'material', 'fact_nos', 'answer_ids', 'news_ids', 'deadline'],
         additionalProperties: false,
       },
     },
@@ -47,7 +48,8 @@ function gatherContext(today) {
   const usedFactNos = new Set(allDrafts.filter(done).flatMap(d => d.factNos || []));
   const fresh = facts.filter(f => ['お知らせ', 'ネタ'].includes(f.kind) && !usedFactNos.has(f.no) && f.createdAt >= addDays(today, -30));
   const answers = store.load('answers').items.filter(a => !a.usedAt && todayJST(Date.parse(a.at)) >= addDays(today, -21));
-  return { upcoming, results, fresh, answers, recentDrafts, tracking };
+  const news = require('./news').recent(today);
+  return { upcoming, results, fresh, answers, news, recentDrafts, tracking };
 }
 
 function typeCounts(recentDrafts, tracking) {
@@ -66,7 +68,7 @@ async function plan(today, max = 4) {
 
 ## 型（どれかを1本ずつ割り当てる）
 - 選手の声：選手の回答・発言をもとにする。下の「選手の回答」が無いときは使わない
-- 格ゲー×若手の目線：SF6や格ゲーの話題を、10代中心の選手の目線で語る。最新のアップデートや大会の情報は与えられたものだけを使い、知らない事実は【要確認】にする
+- 格ゲー×若手の目線：SF6や格ゲーの話題を、10代中心の選手の目線で語る。下の「SF6の最近のニュース」があれば優先して使う。最新のアップデートや大会の情報は与えられたものだけを使い、知らない事実は【要確認】にする
 - 数字・参加型：数字や選択肢でファンが答えたくなる投稿（Xのアンケート案、クイズ、予想など）
 - 大会の物語化：直近の予定・結果を、前回からの変化と次への続きとして描く
 
@@ -79,7 +81,7 @@ async function plan(today, max = 4) {
 - 「前回」「連載の続き」として触れてよいのは、下の「投稿済みのテーマ」と「アカウントの過去の投稿」だけ。未投稿のテーマは、まだ世に出ていない
 - 「アカウントの過去の投稿」と同じ話・同じ切り口（選手紹介、年齢の並び、拠点の紹介、誕生日など）を繰り返さない。続きや新しい角度として触れるのはよい
 - material には、文案を書く人がそれだけで書けるように、使う事実・回答・前回の結果をまとめて書く
-- fact_nos と answer_ids には使った材料の番号を入れる
+- fact_nos・answer_ids・news_ids には使った材料の番号を入れる。ニュースを使うときは、material にニュースの中身と出典URLを書き写す
 - 文案は在庫にため、毎日1本ずつオーナーに届く（届くのは今日から数日〜1週間後になることがある）。ある日を過ぎると出す意味がなくなる投稿（大会前の予想・告知に絡む話など）は deadline にその最終日（YYYY-MM-DD）を入れる。無ければ空文字
 
 ## 3週間以内の予定
@@ -90,6 +92,9 @@ ${ctx.results.map(fmtFact).join('\n') || 'なし'}
 
 ## まだ使っていないお知らせ・ネタ
 ${ctx.fresh.map(fmtFact).join('\n') || 'なし'}
+
+## SF6の最近のニュース（未使用。選手の目線で語れる話題）
+${ctx.news.map(n => `id=${n.id} ${n.date} [${n.kind}] ${n.title}：${n.summary}（出典：${n.url}）`).join('\n') || 'なし'}
 
 ## 選手の回答（未使用）
 ${ctx.answers.map(a => `id=${a.id} ${a.player}：Q「${a.question}」→ A「${a.answer}」`).join('\n') || 'なし'}
@@ -108,6 +113,7 @@ ${ctx.recentDrafts.filter(d => !d.postedAt).map(d => `${d.date} [${d.type || '�
 }
 
 function markUsed(post, today) {
+  require('./news').markUsed(post.news_ids || [], today);
   if (post.answer_ids.length) {
     store.update('answers', d => {
       for (const a of d.items) if (post.answer_ids.includes(a.id)) a.usedAt = today;

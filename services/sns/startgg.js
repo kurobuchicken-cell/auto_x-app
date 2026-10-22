@@ -68,4 +68,39 @@ async function lookup(urls, startggNames) {
   return { eventName: event.name, tournamentName: tournament.name, participants: event.numEntrants || 0, players };
 }
 
-module.exports = { lookup, slugFrom };
+// 選手のstart.ggユーザー（2026-10 WW Japan 4の参加者から確認）。出場登録した大会を探すのに使う
+const USERS = {
+  オニキ: 'user/f3a60ed3',
+  サトル: 'user/bfc02017',
+  '双子(兄)': 'user/df6e959b',
+  '双子(弟)': 'user/5bd36deb',
+  あしゅまる: 'user/a5ee8b0f',
+};
+const SF6_VIDEOGAME_ID = 43868;
+
+const UPCOMING_Q = `query($slug: String!, $vg: ID) {
+  user(slug: $slug) {
+    tournaments(query: { perPage: 10, filter: { upcoming: true, videogameId: [$vg] } }) { nodes { name slug startAt } }
+  }
+}`;
+
+const jstDate = sec => new Date(sec * 1000 + 9 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+// 選手が出場登録したSF6の大会を、大会ごとにまとめて返す。終わった大会が「upcoming」に残っていることがあるため、開催日で絞る
+async function upcomingEntries(from, to) {
+  if (!process.env.STARTGG_TOKEN) return null;
+  const bySlug = new Map();
+  for (const [player, slug] of Object.entries(USERS)) {
+    const data = await gql(UPCOMING_Q, { slug, vg: SF6_VIDEOGAME_ID });
+    for (const t of data.user?.tournaments?.nodes || []) {
+      const date = jstDate(t.startAt);
+      if (date < from || date > to) continue;
+      const e = bySlug.get(t.slug) || { name: t.name, slug: t.slug, date, url: `https://www.start.gg/${t.slug}`, players: [] };
+      e.players.push(player);
+      bySlug.set(t.slug, e);
+    }
+  }
+  return [...bySlug.values()];
+}
+
+module.exports = { lookup, slugFrom, upcomingEntries, USERS };
