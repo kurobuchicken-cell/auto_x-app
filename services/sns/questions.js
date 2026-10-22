@@ -52,6 +52,8 @@ ${ctx.upcoming.map(f => `${f.date} ${f.summary}`).join('\n') || 'なし'}
 ${ctx.results.map(f => `${f.summary}（${f.placement}）`).join('\n') || 'なし'}
 ## 最近した質問
 ${recentQs.join('\n') || 'なし'}
+${require('./news').xTopicsBlock(today)}
+- 上の「X界隈で話題になっていること」があれば、タイムリーな質問にするために1〜2問はそこから作る（話題の投稿者には触れない）
 
 ${base}`;
   const { questions } = await claude.callJSON(prompt, QUESTION_SCHEMA, { effort: 'medium' });

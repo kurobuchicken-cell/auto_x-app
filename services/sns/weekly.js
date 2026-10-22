@@ -96,6 +96,7 @@ ${ctx.fresh.map(fmtFact).join('\n') || 'なし'}
 ## SF6の最近のニュース（未使用。選手の目線で語れる話題）
 ${ctx.news.map(n => `id=${n.id} ${n.date} [${n.kind}] ${n.title}：${n.summary}（出典：${n.url}）`).join('\n') || 'なし'}
 
+${require('./news').xTopicsBlock(today)}
 ## 選手の回答（未使用）
 ${ctx.answers.map(a => `id=${a.id} ${a.player}：Q「${a.question}」→ A「${a.answer}」`).join('\n') || 'なし'}
 

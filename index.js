@@ -59,6 +59,8 @@ function weekKey(now = Date.now()) {
 const WEEKLY_JOBS = [
   // 週の文案（8時）より前に、材料になるニュースを拾っておく
   { key: 'news', hour: 6, label: 'SF6のニュース', run: () => news.run() },
+  // 9時の質問案に、今週の界隈の話題をヒントとして渡す
+  { key: 'xtopics', hour: 6, label: 'X界隈の話題', run: () => news.xTopics() },
   { key: 'report', hour: 7, label: '週次レポート', run: ch => report.run(ch, MANAGER_ID) },
   { key: 'drafts', hour: 8, label: '今週の文案', run: ch => weekly.run(ch, MANAGER_ID) },
   { key: 'questions', hour: 9, label: '選手への質問案', run: ch => questions.propose(ch, MANAGER_ID) },
