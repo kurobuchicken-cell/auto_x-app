@@ -35,6 +35,8 @@ function similarity(a, b) {
 function matchDraft(text, draftItems) {
   let best = { draft: null, score: 0 };
   for (const d of draftItems) {
+    // まだ送っていない在庫はオーナーの目に入っていないので、投稿の元にはなりえない
+    if (d.queuedAt && !d.deliveredAt) continue;
     for (const p of d.patterns) {
       const score = similarity(text, p);
       if (score > best.score) best = { draft: d, score };
@@ -154,7 +156,7 @@ async function checkRecentPosts(days = 3, now = Date.now()) {
   return true;
 }
 
-async function run(channel) {
+async function run(channel, managerId = null) {
   if (!process.env.X_BEARER_TOKEN) {
     await channel.send('📊 週次レポート：X APIのキーが未設定のため、数字を取れませんでした。');
     return;
@@ -163,7 +165,7 @@ async function run(channel) {
   await require('./history').sync().catch(err => console.error('投稿履歴の取り込みエラー:', err.message));
   const snapshot = await fetchSnapshot();
   const history = store.load('metrics').snapshots;
-  const text = buildReport(snapshot, history);
+  const text = `${managerId ? `<@${managerId}> ` : ''}${buildReport(snapshot, history)}`;
   markPosted(snapshot.posts);
   for (const p of snapshot.posts) delete p.fullText;
   store.update('metrics', m => { m.snapshots.push(snapshot); });

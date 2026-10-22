@@ -56,7 +56,7 @@ async function seedResults(posts) {
 
 function summary(limit = 80) {
   return store.load('posts').items.slice(-limit).reverse()
-    .map(p => `${p.createdAt.slice(0, 10)} ${p.text.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').slice(0, 60)}`)
+    .map(p => `${new Date(Date.parse(p.createdAt) + 9 * 60 * 60 * 1000).toISOString().split('T')[0]} ${p.text.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').slice(0, 60)}`)
     .join('\n');
 }
 

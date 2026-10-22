@@ -52,6 +52,8 @@ ${ctx.upcoming.map(f => `${f.date} ${f.summary}`).join('\n') || 'なし'}
 ${ctx.results.map(f => `${f.summary}（${f.placement}）`).join('\n') || 'なし'}
 ## 最近した質問
 ${recentQs.join('\n') || 'なし'}
+## 選手から出た、質問のやり方への要望（守る）
+${(store.load('state').playerFeedback || []).slice(-8).map(f => `${f.channelName}：${f.text}`).join('\n') || 'なし'}
 
 ${base}`;
   const { questions } = await claude.callJSON(prompt, QUESTION_SCHEMA, { effort: 'medium' });
@@ -148,7 +150,7 @@ function onPlayerMessage(message, staffIds = [], now = Date.now()) {
   const author = message.member?.displayName || message.author.username;
   store.update('state', s => {
     s.answerBuffer = s.answerBuffer || {};
-    const b = s.answerBuffer[message.channelId] || { channelName: q.channelName, question: q.question, authors: [], parts: [], ids: [] };
+    const b = s.answerBuffer[message.channelId] || { channelName: q.channelName, question: q.question, questionId: q.messageId, authors: [], parts: [], ids: [] };
     if (!b.authors.includes(author)) b.authors.push(author);
     b.parts.push(text);
     b.ids.push(message.id);
@@ -160,63 +162,125 @@ function onPlayerMessage(message, staffIds = [], now = Date.now()) {
 
 const RELEVANCE_SCHEMA = {
   type: 'object',
-  properties: { is_answer: { type: 'boolean' }, answer: { type: 'string' } },
-  required: ['is_answer', 'answer'],
+  properties: {
+    is_answer: { type: 'boolean' },
+    answer: { type: 'string' },
+    adds_new: { type: 'boolean' },
+    about_questions: { type: 'string' },
+  },
+  required: ['is_answer', 'answer', 'adds_new', 'about_questions'],
   additionalProperties: false,
 };
 
-async function judgeAnswer(question, text) {
+async function judgeAnswer(question, text, prevAnswer = null) {
   const prompt = `選手に次の質問を送り、そのあと選手がチャンネルに次の書き込みをしました。
 
 質問：${question}
-書き込み（複数に分かれていることがある）：
+${prevAnswer ? `この質問には、前にこう答えてもらっている：${prevAnswer}\n` : ''}書き込み（複数に分かれていることがある）：
 ${text}
 
-この書き込みが質問への答え（または投稿の材料になる選手自身の話）なら is_answer を true にし、answer に答えの中身を選手の言葉をできるだけ残して1つにまとめてください。
-スタッフへの事務連絡・雑談・スタンプだけなど、質問と関係ないなら is_answer を false、answer は空文字にしてください。`;
-  return claude.callJSON(prompt, RELEVANCE_SCHEMA, { effort: 'low', maxTokens: 2000 });
+- 書き込みの中に、質問への答え（または投稿の材料になる選手自身の話）が少しでもあれば is_answer を true にする。事務連絡やあいさつと混ざっているときは、答えの部分だけを使う
+- answer には、答えの中身を選手の言葉をできるだけ残して1つにまとめる。${prevAnswer ? '前の答えと今回の書き込みを合わせて、1つの答えとしてまとめ直す（言い直し・補足・訂正は今回のほうを正とする）' : ''}
+- adds_new は、${prevAnswer ? '今回の書き込みが前の答えに新しい中身（新しい話・具体例・訂正）を足しているなら true、同じことの言い直しだけなら false' : '常に true'}
+- about_questions には、選手が質問のやり方について言っていること（例：急に聞かれると答えにくい、通話なら話せる）を短くまとめる。無ければ空文字
+- スタッフへの事務連絡・雑談・スタンプだけなど、答えが含まれないなら is_answer を false、answer は空文字にする`;
+  return claude.callJSON(prompt, RELEVANCE_SCHEMA, { effort: 'medium', maxTokens: 2000 });
 }
 
-// 最後の書き込みから一定時間たった回答を、まとめて1つの答えとして文案にする
-async function flushAnswers(botChannel, now = Date.now()) {
+function findPrevAnswer(b) {
+  return store.load('answers').items
+    .filter(a => (b.questionId && a.questionId === b.questionId) || (a.player === b.channelName && a.question === b.question))
+    .pop() || null;
+}
+
+function answerMaterial(b, author, answer) {
+  return `${playersOf(b.channelName).join('・')}への質問「${b.question}」に、${author}がこう答えた：「${answer}」`;
+}
+
+const answerHeader = (b, answer, note = '') => `💬 **#${b.channelName} の回答から${note}**\nQ：${b.question}\nA：${answer}`;
+
+// 最後の書き込みから一定時間たった回答を、まとめて1つの答えとして在庫に入れる。
+// 同じ質問への2回目以降の書き込みは、前の回答と合わせて1つの答えにする（2026-10-22オーナー指示）
+async function flushAnswers(now = Date.now()) {
   const buffers = store.load('state').answerBuffer || {};
   for (const [channelId, b] of Object.entries(buffers)) {
     if (now - b.lastAt < ANSWER_QUIET_MINUTES * 60 * 1000) continue;
-    // 先に取り除く（文案づくりが失敗しても、同じ回答で何度も文案を出さないため）
+    // 先に取り除く（文案づくりが失敗しても、同じ回答で何度も文案を作らないため）
     store.update('state', s => { delete s.answerBuffer[channelId]; });
 
     const raw = b.parts.join('\n');
+    const prev = findPrevAnswer(b);
     let judged;
     try {
-      judged = await judgeAnswer(b.question, raw);
+      judged = await judgeAnswer(b.question, raw, prev?.answer);
     } catch (err) {
       console.error('回答の判定エラー（回答として扱う）:', err.message);
-      judged = { is_answer: true, answer: raw };
+      judged = { is_answer: true, answer: prev ? `${prev.answer}\n${raw}` : raw, adds_new: true, about_questions: '' };
     }
+    if (judged.about_questions) {
+      store.update('state', s => { (s.playerFeedback = s.playerFeedback || []).push({ channelName: b.channelName, text: judged.about_questions, at: new Date(now).toISOString() }); });
+      console.log(`📝 #${b.channelName} から質問のやり方への要望：${judged.about_questions}`);
+    }
+    // あとで判定が正しかったか確かめられるよう、使わなかった書き込みも全文をログに残す
     if (!judged.is_answer) {
-      console.log(`💤 #${b.channelName} の書き込みは質問への回答ではないため使わない：${raw.slice(0, 40)}`);
+      console.log(`💤 #${b.channelName} の書き込みは質問への回答ではないため使わない：${raw}`);
+      continue;
+    }
+    if (prev) {
+      await mergeAnswer(prev, b, raw, judged, now);
       continue;
     }
 
     const author = b.authors.join('・');
+    const id = b.ids[0];
     store.update('answers', d => {
-      d.items.push({ id: b.ids[0], player: b.channelName, author, question: b.question, answer: judged.answer, raw, at: new Date(now).toISOString(), usedAt: todayJST(now) });
+      d.items.push({ id, player: b.channelName, author, question: b.question, questionId: b.questionId || null, answer: judged.answer, raw, at: new Date(now).toISOString(), usedAt: todayJST(now) });
     });
     try {
-      await drafts.draftAndSend(
-        botChannel,
-        `${playersOf(b.channelName).join('・')}への質問「${b.question}」に、${author}がこう答えた：「${judged.answer}」`,
-        {
-          type: '選手の声',
-          source: 'answer',
-          topic: `${b.channelName}の回答：${judged.answer.slice(0, 40)}`,
-          header: `💬 **#${b.channelName} から回答がありました**\nQ：${b.question}\nA：${raw}`,
-        }
-      );
+      await drafts.enqueue(answerMaterial(b, author, judged.answer), {
+        type: '選手の声',
+        source: 'answer',
+        answerIds: [id],
+        topic: `${b.channelName}の回答：${judged.answer.slice(0, 40)}`,
+        header: answerHeader(b, judged.answer),
+      });
+      console.log(`📦 #${b.channelName} の回答を在庫に入れた`);
     } catch (err) {
-      console.error('回答の文案づくりエラー:', err);
-      await botChannel.send(`💬 #${b.channelName} から回答がありました（文案づくりに失敗したので、必要ならこのまま書き込んでください）\nQ：${b.question}\nA：${raw}`).catch(() => {});
+      // 文案にできなくても、回答は週の文案の材料として残す
+      console.error('回答の文案づくりエラー（週の文案の材料に回す）:', err);
+      store.update('answers', d => { const a = d.items.find(x => x.id === id); if (a) a.usedAt = null; });
     }
+  }
+}
+
+async function mergeAnswer(prev, b, raw, judged, now) {
+  const author = [...new Set([...prev.author.split('・'), ...b.authors])].join('・');
+  store.update('answers', d => {
+    const a = d.items.find(x => x.id === prev.id);
+    Object.assign(a, { author, answer: judged.answer, raw: `${a.raw}\n${raw}`, mergedAt: new Date(now).toISOString() });
+  });
+  const material = answerMaterial(b, author, judged.answer);
+  const item = store.load('drafts').items.filter(d => d.answerIds?.includes(prev.id)).pop();
+  try {
+    if (item && drafts.isQueued(item)) {
+      await drafts.requeue(item.id, material, { type: '選手の声', header: answerHeader(b, judged.answer) });
+      console.log(`📦 #${b.channelName} の追記に合わせて、在庫の文案を作り直した`);
+    } else if (!item || !prev.usedAt) {
+      console.log(`📦 #${b.channelName} の追記は、週の文案の材料として残した`);
+    } else if (judged.adds_new) {
+      await drafts.enqueue(material, {
+        type: '選手の声',
+        source: 'answer',
+        answerIds: [prev.id],
+        topic: `${b.channelName}の回答（追記）：${judged.answer.slice(0, 40)}`,
+        header: answerHeader(b, judged.answer, '（追記を反映）'),
+      });
+      console.log(`📦 #${b.channelName} の追記を反映した文案を在庫に入れた`);
+    } else {
+      console.log(`💤 #${b.channelName} の追記は前の回答の言い直しのため、文案は作らない：${raw}`);
+    }
+  } catch (err) {
+    console.error('追記の文案づくりエラー:', err);
   }
 }
 

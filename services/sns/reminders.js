@@ -1,5 +1,6 @@
 const store = require('./store');
 const report = require('./report');
+const drafts = require('./drafts');
 const { todayJST } = require('./prompt');
 const { addDays } = require('./weekly');
 
@@ -51,12 +52,28 @@ async function collect(now) {
   return items.filter(i => remindCount(i.key) < MAX_REMINDS);
 }
 
+// 大会の告知・結果報告を出した日は、投稿が1日に重ならないよう在庫からは出さない
+function hasEventDraftToday(today) {
+  return store.load('drafts').items.some(d => ['event', 'result'].includes(d.source) && d.date === today);
+}
+
+// 毎日18時：在庫の文案を1本と、対応待ちを1通にまとめてメンションする（夜の投稿に間に合う時刻）
 async function runDaily(channel, managerId, now = Date.now()) {
+  const today = todayJST(now);
+  drafts.expireQueue(today);
+  drafts.releaseUnpostedAnswers(today);
+  const stock = drafts.queued(today);
+  const pick = hasEventDraftToday(today) ? null : stock[0] || null;
   const items = await collect(now);
-  if (!items.length) return 0;
-  await channel.send(`🔔 <@${managerId}> **対応待ちのものがあります**\n${items.map(i => `・${i.text}`).join('\n')}`);
+  if (!pick && !items.length) return { delivered: null, reminded: 0 };
+
+  const lines = [];
+  if (pick) lines.push(`📝 **今日の投稿案です**（在庫：あと${stock.length - 1}本）`);
+  if (items.length) lines.push(`${pick ? '\n' : ''}**対応待ち**\n${items.map(i => `・${i.text}`).join('\n')}`);
+  await channel.send(`🔔 <@${managerId}> ${lines.join('\n')}`);
   bumpCounts(items.map(i => i.key));
-  return items.length;
+  if (pick) await drafts.deliver(channel, pick);
+  return { delivered: pick, reminded: items.length };
 }
 
 module.exports = { runDaily, collect };

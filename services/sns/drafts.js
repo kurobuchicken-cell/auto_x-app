@@ -92,4 +92,94 @@ async function draftAndSend(channel, material, { type = null, header = '', extra
   return patterns;
 }
 
-module.exports = { generatePatterns, draftAndSend, sendPatterns, enforceRules, TYPES };
+// ── 在庫（まとめて何通も送らず、毎日1本ずつメンションして送る。2026-10-22オーナー指示） ──
+
+const QUEUE_MAX_DAYS = 14;
+
+async function enqueue(material, { type = null, header = '', extra = '', source = 'manual', topic = null, count = 3, factNos = [], answerIds = [], deadline = null } = {}) {
+  const patterns = await generatePatterns(material, { type, extra, count });
+  return store.update('drafts', d => {
+    const item = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, date: todayJST(), type, topic: topic || material.slice(0, 80), source, factNos, url: null,
+      patterns: patterns.map(p => p.text), queuedPatterns: patterns, header, answerIds, deadline: deadline || null, queuedAt: new Date().toISOString(),
+    };
+    d.items.push(item);
+    return item;
+  });
+}
+
+// 同じ回答に追記があったとき、まだ送っていない在庫を作り直す（並び順は元のまま）
+async function requeue(id, material, { type = null, header = '', count = 3 } = {}) {
+  const patterns = await generatePatterns(material, { type, count });
+  return store.update('drafts', d => {
+    const item = d.items.find(x => x.id === id && x.queuedAt && !x.deliveredAt && !x.droppedAt);
+    if (!item) return null;
+    Object.assign(item, { patterns: patterns.map(p => p.text), queuedPatterns: patterns, header });
+    return item;
+  });
+}
+
+const isQueued = d => d.queuedAt && !d.deliveredAt && !d.droppedAt;
+
+// 古い順。ただし締め切りが明日までのものは先に出す（FIFOのまま締め切りを過ぎて捨てるのを防ぐ）
+function queued(today = todayJST()) {
+  const { addDays } = require('./weekly');
+  const urgent = d => (d.deadline && d.deadline <= addDays(today, 1) ? 0 : 1);
+  return store.load('drafts').items.filter(isQueued).sort((a, b) => urgent(a) - urgent(b) || a.queuedAt.localeCompare(b.queuedAt));
+}
+
+// 締め切り切れ・古すぎる在庫は外し、使った回答は週の文案の材料に戻す
+function expireQueue(today = todayJST()) {
+  const { addDays } = require('./weekly');
+  const freed = [];
+  const dropped = store.update('drafts', d => {
+    const out = [];
+    for (const item of d.items.filter(isQueued)) {
+      const reason = item.deadline && item.deadline < today ? '締め切り切れ' : todayJST(Date.parse(item.queuedAt)) < addDays(today, -QUEUE_MAX_DAYS) ? '古すぎる' : null;
+      if (!reason) continue;
+      item.droppedAt = new Date().toISOString();
+      item.dropReason = reason;
+      freed.push(...(item.answerIds || []));
+      out.push(item);
+    }
+    return out;
+  });
+  releaseAnswers(freed);
+  for (const item of dropped) console.log(`🗑️ 在庫から外した（${item.dropReason}）：${item.topic}`);
+  return dropped;
+}
+
+// 送ったのに投稿されなかった回答も、一定期間たてば材料に戻す
+function releaseUnpostedAnswers(today = todayJST()) {
+  const { addDays } = require('./weekly');
+  const freed = store.update('drafts', d => {
+    const ids = [];
+    for (const item of d.items) {
+      if (!item.answerIds?.length || !item.deliveredAt || item.postedAt || item.answersReleased) continue;
+      if (todayJST(Date.parse(item.deliveredAt)) >= addDays(today, -QUEUE_MAX_DAYS)) continue;
+      item.answersReleased = true;
+      ids.push(...item.answerIds);
+    }
+    return ids;
+  });
+  releaseAnswers(freed);
+  return freed;
+}
+
+function releaseAnswers(ids) {
+  if (!ids.length) return;
+  store.update('answers', d => {
+    for (const a of d.items) if (ids.includes(a.id)) a.usedAt = null;
+  });
+}
+
+async function deliver(channel, item) {
+  const patterns = item.queuedPatterns || item.patterns.map((text, i) => ({ label: `パターン${i + 1}`, text, note: '' }));
+  const msg = await sendPatterns(channel, item.header, patterns);
+  store.update('drafts', d => {
+    const x = d.items.find(y => y.id === item.id);
+    if (x) Object.assign(x, { deliveredAt: new Date().toISOString(), url: msg?.url ?? null });
+  });
+}
+
+module.exports = { generatePatterns, draftAndSend, sendPatterns, enforceRules, TYPES, enqueue, requeue, queued, expireQueue, releaseUnpostedAnswers, deliver, isQueued };

@@ -30,9 +30,9 @@ const HELP_TEXT = `📖 **使い方**（何を書いても文案を3パターン
 ・ネタ・お知らせ・大会予定・結果は、そのまま書けば記録して文案を作ります
 ・大会の予定・結果は、ウェブとstart.ggで裏を取ってから文案にします
 ・大会の3日前〜前日に告知文、終わった翌日に結果報告文を自動で出します
-・対応待ち（質問案の✅／❌、大会の告知・結果の未投稿など）は毎日18時にまとめてお知らせします
+・週の文案と選手の回答から作った文案は在庫にためて、毎日18時に1本ずつ送ります（対応待ちのお知らせも同じ通知にまとめます）
 ・まだ出せない情報は「未公開：〜」と書く → 解禁前として扱い、検索にも週の文案にも使いません
-・「今週の文案」→ 今週の文案を今すぐ作る
+・「今週の文案」→ 今週の文案を今すぐ作って在庫に入れる
 ・「質問案」→ 選手への質問案を今すぐ作る
 ・「レポート」→ Xの数字レポートを今すぐ出す
 ・「記録」→ 記録した情報の一覧（🔒は未公開）
@@ -54,7 +54,7 @@ function weekKey(now = Date.now()) {
 }
 
 const WEEKLY_JOBS = [
-  { key: 'report', hour: 7, label: '週次レポート', run: ch => report.run(ch) },
+  { key: 'report', hour: 7, label: '週次レポート', run: ch => report.run(ch, MANAGER_ID) },
   { key: 'drafts', hour: 8, label: '今週の文案', run: ch => weekly.run(ch, MANAGER_ID) },
   { key: 'questions', hour: 9, label: '選手への質問案', run: ch => questions.propose(ch, MANAGER_ID) },
 ];
@@ -146,7 +146,7 @@ setInterval(async () => {
 
   await runDueWeeklyJobs().catch(err => console.error('週次ジョブエラー:', err));
   await runDailyJobs().catch(err => console.error('毎日の処理エラー:', err));
-  await questions.flushAnswers(await botChannel()).catch(err => console.error('選手の回答のまとめエラー:', err));
+  await questions.flushAnswers().catch(err => console.error('選手の回答のまとめエラー:', err));
 
   // 9時以降に1日1回メールチェック（再起動で9時台を逃しても当日中に実行される）
   if (h >= 9 && lastMailCheckDate !== today) {
@@ -171,7 +171,7 @@ async function handleCommand(message, text) {
   }
   if (/^今週の文案$/.test(text)) {
     await message.react('✍️');
-    await weekly.run(ch, MANAGER_ID);
+    await weekly.run(ch, MANAGER_ID, { manual: true });
     store.update('state', s => { s.lastRun.drafts = weekKey(); });
     return true;
   }

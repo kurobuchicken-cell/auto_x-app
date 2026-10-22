@@ -22,8 +22,9 @@ const PLAN_SCHEMA = {
           material: { type: 'string' },
           fact_nos: { type: 'array', items: { type: 'integer' } },
           answer_ids: { type: 'array', items: { type: 'string' } },
+          deadline: { type: 'string' },
         },
-        required: ['type', 'topic', 'material', 'fact_nos', 'answer_ids'],
+        required: ['type', 'topic', 'material', 'fact_nos', 'answer_ids', 'deadline'],
         additionalProperties: false,
       },
     },
@@ -45,7 +46,7 @@ function gatherContext(today) {
   const recentDrafts = allDrafts.filter(d => d.date >= addDays(today, -42) && done(d));
   const usedFactNos = new Set(allDrafts.filter(done).flatMap(d => d.factNos || []));
   const fresh = facts.filter(f => ['お知らせ', 'ネタ'].includes(f.kind) && !usedFactNos.has(f.no) && f.createdAt >= addDays(today, -30));
-  const answers = store.load('answers').items.filter(a => !a.usedAt && a.at.slice(0, 10) >= addDays(today, -21));
+  const answers = store.load('answers').items.filter(a => !a.usedAt && todayJST(Date.parse(a.at)) >= addDays(today, -21));
   return { upcoming, results, fresh, answers, recentDrafts, tracking };
 }
 
@@ -58,10 +59,10 @@ function typeCounts(recentDrafts, tracking) {
   return counts;
 }
 
-async function plan(today) {
+async function plan(today, max = 4) {
   const ctx = gatherContext(today);
   const fmtFact = f => `#${f.no} [${f.kind}] ${f.date || '日付不明'} ${f.summary}${f.placement ? `（${f.placement}）` : ''}`;
-  const prompt = `今週（${today}の週）にXへ出す投稿を3本前後（2〜4本）計画してください。
+  const prompt = `今週（${today}の週）にXへ出す投稿を${max >= 3 ? `3本前後（2〜${max}本）` : `${max}本`}計画してください。
 
 ## 型（どれかを1本ずつ割り当てる）
 - 選手の声：選手の回答・発言をもとにする。下の「選手の回答」が無いときは使わない
@@ -79,6 +80,7 @@ async function plan(today) {
 - 「アカウントの過去の投稿」と同じ話・同じ切り口（選手紹介、年齢の並び、拠点の紹介、誕生日など）を繰り返さない。続きや新しい角度として触れるのはよい
 - material には、文案を書く人がそれだけで書けるように、使う事実・回答・前回の結果をまとめて書く
 - fact_nos と answer_ids には使った材料の番号を入れる
+- 文案は在庫にため、毎日1本ずつオーナーに届く（届くのは今日から数日〜1週間後になることがある）。ある日を過ぎると出す意味がなくなる投稿（大会前の予想・告知に絡む話など）は deadline にその最終日（YYYY-MM-DD）を入れる。無ければ空文字
 
 ## 3週間以内の予定
 ${ctx.upcoming.map(fmtFact).join('\n') || 'なし'}
@@ -102,7 +104,7 @@ ${ctx.recentDrafts.filter(d => d.postedAt).map(d => `${d.date} [${d.type || '型
 ${ctx.recentDrafts.filter(d => !d.postedAt).map(d => `${d.date} [${d.type || '型なし'}] ${d.topic}`).join('\n') || 'なし'}`;
 
   const { posts } = await claude.callJSON(prompt, PLAN_SCHEMA, { effort: 'medium' });
-  return posts.slice(0, 4);
+  return posts.slice(0, max);
 }
 
 function markUsed(post, today) {
@@ -113,33 +115,45 @@ function markUsed(post, today) {
   }
 }
 
-async function run(channel, managerId) {
+// 在庫と合わせて約1週間分（1日1本）になるように作る
+const STOCK_TARGET = 7;
+
+async function run(channel, managerId, { manual = false } = {}) {
   const today = todayJST();
+  drafts.expireQueue(today);
+  const max = Math.min(4, STOCK_TARGET - drafts.queued(today).length);
+  if (max <= 0) {
+    console.log('📦 在庫が1週間分あるため、今週の文案は作らない');
+    if (manual) await channel.send(`📦 在庫が${drafts.queued(today).length}本あるので、新しくは作りませんでした。毎日18時に1本ずつ送ります。`);
+    return;
+  }
   await require('./history').sync().catch(err => console.error('投稿履歴の取り込みエラー:', err.message));
-  const posts = await plan(today);
+  const posts = await plan(today, max);
   if (posts.length === 0) throw new Error('今週の計画が0本でした');
 
-  await channel.send(`📅 **今週の文案（${posts.length}本）です** <@${managerId}>\n気に入ったものをコピペで投稿してください。使わない分は放置でOK（投稿されなかったテーマは後日また出します）。別の案が欲しいときは、そのテーマを書き込めば3パターン返します。`);
-
-  let sent = 0;
+  let queuedCount = 0;
   for (const [i, post] of posts.entries()) {
     try {
-      await drafts.draftAndSend(channel, post.material, {
+      await drafts.enqueue(post.material, {
         type: post.type,
         topic: post.topic,
         source: 'weekly',
         count: 1,
         factNos: post.fact_nos,
-        header: `━━━━━━━━━━\n**${i + 1}/${posts.length}【${post.type}】${post.topic}**`,
+        answerIds: post.answer_ids,
+        deadline: /^\d{4}-\d{2}-\d{2}$/.test(post.deadline) ? post.deadline : null,
+        header: `━━━━━━━━━━
+**【${post.type}】${post.topic}**${/^\d{4}-\d{2}-\d{2}$/.test(post.deadline) ? `（${post.deadline}までに投稿）` : ''}`,
       });
       markUsed(post, today);
-      sent++;
+      queuedCount++;
     } catch (err) {
       console.error(`週の文案 ${i + 1}本目の生成エラー:`, err);
-      await channel.send(`⚠️ ${i + 1}本目（${post.topic}）の文案づくりに失敗しました。テーマをそのまま書いてもらえれば作り直します。`);
     }
   }
-  if (sent === 0) throw new Error('今週の文案が1本も作れませんでした');
+  if (queuedCount === 0) throw new Error('今週の文案が1本も作れませんでした');
+  console.log(`📦 今週の文案を${queuedCount}本、在庫に入れた`);
+  if (manual) await channel.send(`📦 文案を${queuedCount}本作って在庫に入れました（在庫：${drafts.queued(today).length}本）。毎日18時に1本ずつ送ります。`);
 }
 
 module.exports = { run, plan, gatherContext, addDays };
