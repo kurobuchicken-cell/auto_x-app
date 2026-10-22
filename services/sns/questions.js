@@ -52,8 +52,6 @@ ${ctx.upcoming.map(f => `${f.date} ${f.summary}`).join('\n') || 'なし'}
 ${ctx.results.map(f => `${f.summary}（${f.placement}）`).join('\n') || 'なし'}
 ## 最近した質問
 ${recentQs.join('\n') || 'なし'}
-## 選手から出た、質問のやり方への要望（守る）
-${(store.load('state').playerFeedback || []).slice(-8).map(f => `${f.channelName}：${f.text}`).join('\n') || 'なし'}
 
 ${base}`;
   const { questions } = await claude.callJSON(prompt, QUESTION_SCHEMA, { effort: 'medium' });
@@ -166,9 +164,8 @@ const RELEVANCE_SCHEMA = {
     is_answer: { type: 'boolean' },
     answer: { type: 'string' },
     adds_new: { type: 'boolean' },
-    about_questions: { type: 'string' },
   },
-  required: ['is_answer', 'answer', 'adds_new', 'about_questions'],
+  required: ['is_answer', 'answer', 'adds_new'],
   additionalProperties: false,
 };
 
@@ -182,7 +179,7 @@ ${text}
 - 書き込みの中に、質問への答え（または投稿の材料になる選手自身の話）が少しでもあれば is_answer を true にする。事務連絡やあいさつと混ざっているときは、答えの部分だけを使う
 - answer には、答えの中身を選手の言葉をできるだけ残して1つにまとめる。${prevAnswer ? '前の答えと今回の書き込みを合わせて、1つの答えとしてまとめ直す（言い直し・補足・訂正は今回のほうを正とする）' : ''}
 - adds_new は、${prevAnswer ? '今回の書き込みが前の答えに新しい中身（新しい話・具体例・訂正）を足しているなら true、同じことの言い直しだけなら false' : '常に true'}
-- about_questions には、選手が質問のやり方について言っていること（例：急に聞かれると答えにくい、通話なら話せる）を短くまとめる。無ければ空文字
+- 選手の言葉を別の言葉に置き換えない。誤変換らしい言葉（例：キャラ名が変換ミスになっている）も推測で直さず、そのまま残す
 - スタッフへの事務連絡・雑談・スタンプだけなど、答えが含まれないなら is_answer を false、answer は空文字にする`;
   return claude.callJSON(prompt, RELEVANCE_SCHEMA, { effort: 'medium', maxTokens: 2000 });
 }
@@ -215,11 +212,7 @@ async function flushAnswers(now = Date.now()) {
       judged = await judgeAnswer(b.question, raw, prev?.answer);
     } catch (err) {
       console.error('回答の判定エラー（回答として扱う）:', err.message);
-      judged = { is_answer: true, answer: prev ? `${prev.answer}\n${raw}` : raw, adds_new: true, about_questions: '' };
-    }
-    if (judged.about_questions) {
-      store.update('state', s => { (s.playerFeedback = s.playerFeedback || []).push({ channelName: b.channelName, text: judged.about_questions, at: new Date(now).toISOString() }); });
-      console.log(`📝 #${b.channelName} から質問のやり方への要望：${judged.about_questions}`);
+      judged = { is_answer: true, answer: prev ? `${prev.answer}\n${raw}` : raw, adds_new: true };
     }
     // あとで判定が正しかったか確かめられるよう、使わなかった書き込みも全文をログに残す
     if (!judged.is_answer) {

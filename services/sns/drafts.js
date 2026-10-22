@@ -36,6 +36,53 @@ function styleExamples(limit = 5) {
   return `\n## オーナーが実際に投稿した文（書き方・長さ・温度感のお手本。内容は真似しない）\n${body}\n`;
 }
 
+const VERIFY_SCHEMA = {
+  type: 'object',
+  properties: {
+    patterns: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { text: { type: 'string' }, removed: { type: 'array', items: { type: 'string' } } },
+        required: ['text', 'removed'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['patterns'],
+  additionalProperties: false,
+};
+
+// 文案を作るときの指示だけでは、選手が言っていない気持ち・評価（例：「負けそうな時が一番怖い」）が
+// 足されることがあったため、材料と照らし合わせる工程を別に通す（2026-10-22オーナー指示）
+async function verifyFacts(material, extra, patterns) {
+  const prompt = `次のX投稿文案を、材料と照らし合わせて確かめてください。
+
+材料：
+${material}
+${extra ? `\n補足：\n${extra}\n` : ''}
+文案：
+${patterns.map((p, i) => `--- ${i + 1}\n${p.text}`).join('\n')}
+
+- 材料に無い事実・数字・固有名詞（キャラ名・技名・大会名など）・選手の発言を見つけたら、削るか、材料にある言い方に直す
+- 選手の気持ち・性格・考え（「〜が一番怖い」「〜らしい」「〜が好き」など）は、材料で選手自身が言っているときだけ残す。言っていなければ削る
+- 「」で選手の言葉として書いている部分は、材料にある言葉から意味を変えない
+- 材料にある内容は削らない。改行・段落・絵文字・ハッシュタグ・【要確認：〜】はそのまま残す
+- 問題が無ければ text は元のまま、removed は空にする。直したときは removed に削った・直した内容を短く書く
+- 文案と同じ数・同じ順で返す`;
+  try {
+    const { patterns: checked } = await claude.callJSON(prompt, VERIFY_SCHEMA, { effort: 'medium' });
+    if (checked.length !== patterns.length) throw new Error(`確認結果の数が合わない（${checked.length}/${patterns.length}）`);
+    return patterns.map((p, i) => {
+      if (checked[i].removed.length) console.log(`🔍 文案${i + 1}から材料に無い内容を外した：${checked[i].removed.join(' / ')}`);
+      return { ...p, text: checked[i].text };
+    });
+  } catch (err) {
+    console.error('文案の事実確認エラー（確認なしで出す）:', err.message);
+    return patterns.map(p => ({ ...p, note: `⚠️ 材料との照合ができていません。選手が言っていない内容が無いか確認してください${p.note ? `。${p.note}` : ''}` }));
+  }
+}
+
 async function generatePatterns(material, { type = null, extra = '', count = 3, format = null } = {}) {
   const formatName = format === '大会告知' ? '大会の告知' : '大会の結果報告';
   const typeLine = (type ? `この投稿の型：「${type}」\n` : '') + (format ? `投稿の形式：「${formatName}」の型を必ず守る\n` : '');
@@ -49,13 +96,15 @@ ${material}
 ${extra ? `\n補足：\n${extra}\n` : ''}${styleExamples()}
 ${ask}
 
+- 選手の発言・気持ち・考えとして書くのは、材料で選手自身が言っていることだけ。言っていない気持ちや評価（「〜が一番怖い」「〜らしい」など）を足さない
 - text はXにそのまま貼れる投稿本文だけにする。【要確認：〜】は、投稿前に埋める必要がある事実が欠けているときだけ本文に残す
 - アンケートの選択肢、正解発表の文、オーナーが投稿前に確認すべきことは本文に入れず note に書く。note は必要なことだけを短く（字数の説明や、使わなかった材料の説明は書かない）。無ければ空文字`;
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     const { patterns } = await claude.callJSON(prompt, PATTERN_SCHEMA);
     if (patterns.length >= count) {
-      return patterns.slice(0, count).map(p => ({ label: p.label, text: enforceRules(p.text, { tournament: !!format }), note: (p.note || '').trim() }));
+      const checked = await verifyFacts(material, extra, patterns.slice(0, count));
+      return checked.map(p => ({ label: p.label, text: enforceRules(p.text, { tournament: !!format }), note: (p.note || '').trim() }));
     }
     console.warn(`⚠️ パターン数が${patterns.length}件のため再生成（${attempt}回目）`);
   }

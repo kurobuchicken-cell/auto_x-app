@@ -31,12 +31,7 @@ async function collect(now) {
 
   const pendingEvent = () => store.load('drafts').items.filter(d => d.source === 'event' && !d.postedAt && d.date >= addDays(today, -4));
   if (pendingEvent().length) {
-    // 投稿済みかどうかをXで確かめてから知らせる（確かめられなければ、未投稿として知らせる）
-    try {
-      await report.checkRecentPosts(5, now);
-    } catch (err) {
-      console.error('リマインド用の投稿確認エラー:', err.message);
-    }
+    // 投稿済みかどうかは runDaily の最初にXで確かめてある（確かめられなければ、未投稿として知らせる）
     for (const d of pendingEvent()) {
       items.push({ key: `event:${d.id}`, text: `📣 「${d.topic}」がまだXに投稿されていません${d.url ? `：${d.url}` : ''}` });
     }
@@ -60,6 +55,12 @@ function hasEventDraftToday(today) {
 // 毎日18時：在庫の文案を1本と、対応待ちを1通にまとめてメンションする（夜の投稿に間に合う時刻）
 async function runDaily(channel, managerId, now = Date.now()) {
   const today = todayJST(now);
+  // オーナーが実際に投稿した文（手直し後）を毎日取り込み、翌日からの文案のお手本と「前回」の判断に使う
+  try {
+    await report.checkRecentPosts(5, now);
+  } catch (err) {
+    console.error('毎日の投稿確認エラー（続行）:', err.message);
+  }
   drafts.expireQueue(today);
   drafts.releaseUnpostedAnswers(today);
   const stock = drafts.queued(today);
