@@ -230,3 +230,16 @@
   - 未対応：インフルエンサーの投稿への反応案（自動いいねはしない方向で提案済み）、MA案件メールチェックのエラー（formatShortDate・JSON・ChatWork 429）
 - 触ったファイル：index.js、services/sns/news.js（新規）・startgg.js・events.js・research.js・reminders.js・weekly.js・questions.js・drafts.js・store.js、仕様書_auto_x-app.html、CLAUDE.md、HISTORY.md、SESSION_LOG.md
 - 追記（同日・終了前）：インフルエンサーの投稿に反応する案はオーナー判断で廃棄（CLAUDE.mdに記録、929aa98）。MA案件メールチェックのエラーは、2026-08-21に止めた機能の古いログが残っていただけで対応不要（今のメールチェック＝info@・contact@→Slackは正常）。未対応の残課題はなし
+
+## auto_x-app-goalreset-01（2026-10-24）
+- 作業環境：家PC
+- やったこと：毎日18時の在庫配信を停止（本番反映 0b328e1）。絶対ルール3点をCLAUDE.md最上位に追加。Xアナリティクスで投稿ごとのフォロー・プロフィール訪問を調査
+- 完了した状態：
+  - 在庫の文案は本番で配信停止中（reminders.js の STOCK_DELIVERY_PAUSED）。対応待ちのリマインドは毎日18時に残る
+  - 直近3か月18投稿でフォローを生んだのは2本だけ。詰まりは「投稿→プロフィール訪問」と「プロフィール訪問→フォロー」（HISTORY.md 2026-10-24）
+- 残課題・次にやること：
+  - 測る仕組み：フォロワー数を毎日記録／アカウント本人の認証（OAuth）で投稿ごとのプロフィールのクリックを取得（オーナー承認済み。開発者コンソールの設定とオーナーの「許可」1回が必要）
+  - 投稿ごとの新しいフォロー数とフォロー解除はAPIで取れず、Xアナリティクスの画面だけにある。取り方を決める
+  - 上の2か所の詰まりに対する仮説を立て、投稿計画と選手への質問をそこから逆算する形に作り直す（在庫配信の代わり）
+  - 10/26（月）9時の質問案は今の仕組みのまま届く
+- 触ったファイル：services/sns/reminders.js、services/sns/weekly.js、index.js、CLAUDE.md、HISTORY.md、SESSION_LOG.md
