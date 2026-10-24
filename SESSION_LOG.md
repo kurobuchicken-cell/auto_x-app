@@ -274,3 +274,4 @@
   - 10/26（月）の実際の動きをログで確認（通し確認と同じになるか）
   - 1〜2週間後、見直しの方針とプロフィール→フォロー率の変化を確認
 - 触ったファイル：services/sns/（opponents.js・wwpoints.js 新規、events.js・research.js・startgg.js・growth.js・reminders.js・report.js・weekly.js・prompt.js・store.js）、CLAUDE.md、HISTORY.md、仕様書_auto_x-app.html
+- 次にセッションを開く目安（オーナーと合意）：10/26（月）19時以降＝新しい仕組みの本番初回をログで確認／11/9ごろ＝2週間分の数字でフォロー率と見直しの方針を確認／12/1ごろ＝WW#5の結果報告（対戦記録・相手の実績・WWポイント）を確認。Discordに「⚠️ Xの数字が取れなくなりました」が来たら `node tools/x-oauth-setup.js`
