@@ -12,6 +12,7 @@ const DEFAULTS = {
   posts: { items: [] },
   news: { items: [] },
   growth: { followers: [], posts: {} },
+  opponents: { items: {} },
 };
 
 function filePath(name) {

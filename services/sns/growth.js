@@ -136,4 +136,75 @@ function funnelLines(now = Date.now(), days = 7) {
   return lines.join('\n');
 }
 
-module.exports = { snapshotFollowers, collectPostMetrics, runDaily, dailyNet, funnelLines, slotKey };
+// ── 毎週の見直し（PDCAのC→A） ─────────────────────────────
+
+// 見直しを始めた時点の基準（2026-10-24、Xアナリティクスで直近3か月18投稿を調べた値）
+const BASELINE = 'プロフィールに来た人のうちフォローした割合は約0.19%（固定の投稿「はじめての方へ」に1.5万人来て28人）。フォローを生んだ投稿は18本中2本だけ';
+const FIRST_HYPOTHESIS = 'プロフィールに来た人は直近の投稿を見てフォローを決める。チームにしか出せない「5人が上の舞台に挑む記録」（大会ごとの変化、トパチャン・カプコンカップへの道のり）を続けて出せば、プロフィールからのフォロー率が上がる';
+
+const REVIEW_SCHEMA = {
+  type: 'object',
+  properties: {
+    result: { type: 'string' },
+    learning: { type: 'string' },
+    policy: { type: 'string' },
+    hypothesis: { type: 'string' },
+  },
+  required: ['result', 'learning', 'policy', 'hypothesis'],
+  additionalProperties: false,
+};
+
+function weekData(now, days = 7) {
+  const g = load();
+  const since = todayJST(now - days * 24 * 60 * 60 * 1000);
+  const posts = Object.values(g.posts).filter(p => todayJST(Date.parse(p.createdAt)) >= since).map(p => {
+    const m = latest(p);
+    return `${todayJST(Date.parse(p.createdAt))} 表示${m.imp} プロフィール${m.profile ?? '?'} いいね${m.likes} 返信${m.replies} RT${m.reposts}：${p.text}`;
+  });
+  const net = dailyNet(g.followers).filter(d => d.date >= since);
+  return { posts, net };
+}
+
+// 先週の仮説と今週の数字から、Claudeが結果・分かったこと・今週の方針を書く。方針は18時の判断と週の文案に渡す
+async function weeklyReview(now = Date.now()) {
+  const st = store.load('state');
+  const prev = (st.reviews || []).slice(-1)[0] || null;
+  const { posts, net } = weekData(now);
+  const prompt = `NORTHEPTIONのX運用の毎週の見直しです。目的は、SF6の人たちにNORTHEPTIONをフォローしてもらうこと（フォロワーの純増）。
+
+## 基準（見直しを始めた時点）
+${BASELINE}
+
+## 先週の仮説と方針
+仮説：${prev?.hypothesis || FIRST_HYPOTHESIS}
+方針：${prev?.policy || '（初回）'}
+
+## この1週間のチームの投稿（表示・プロフィールのクリック・反応）
+${posts.join('\n') || '投稿なし'}
+
+## この1週間のフォロワーの増減（日ごと。新規フォローの推定＝増減＋解除の目安1日${BASELINE_UNFOLLOWS_PER_DAY}人）
+${net.map(d => `${d.date} 増減${d.net} 新規フォロー推定${d.estFollows}`).join('\n') || 'まだ記録が2日分ない'}
+
+## 書き方
+- result：仮説に対して数字がどうだったかを1〜2文。数字が少なくて判断できないときは、そう書く（無理に結論を出さない）
+- learning：そこから分かったことを1〜2文。分からなければ「まだ分からない」と書く
+- policy：今週の投稿の方針を1〜2文（何を、なぜ）。本数をこなすことを目的にしない。「毎日」「1〜2日に1本」のような決まった間隔を方針にしない（出すかどうかは内容の価値で決める。オーナーは連日の機械的な通知を望んでいない）
+- hypothesis：今週確かめる仮説を1文（先週のままでよければ同じでよい）
+- 上の数字に無いことを事実として書かない`;
+  const r = await require('./claude').callJSON(prompt, REVIEW_SCHEMA, { effort: 'medium' });
+  const entry = { at: new Date(now).toISOString(), ...r };
+  store.update('state', s => { s.reviews = [...(s.reviews || []), entry].slice(-26); });
+  return entry;
+}
+
+function reviewLines(r) {
+  return `**今週の見直し（仮説→結果→次の一手）**\n・結果：${r.result}\n・分かったこと：${r.learning}\n・今週の方針：${r.policy}\n・今週の仮説：${r.hypothesis}`;
+}
+
+// 18時の判断と週の文案に渡す「今週の方針」
+function currentPolicy() {
+  const r = (store.load('state').reviews || []).slice(-1)[0];
+  return r ? `今週の方針：${r.policy}\n今週の仮説：${r.hypothesis}` : `今週の仮説：${FIRST_HYPOTHESIS}`;
+}
+
+module.exports = { snapshotFollowers, collectPostMetrics, runDaily, dailyNet, funnelLines, slotKey, weeklyReview, reviewLines, currentPolicy };

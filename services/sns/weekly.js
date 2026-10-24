@@ -37,7 +37,9 @@ const PLAN_SCHEMA = {
 // 未公開の情報は、どの経路でも週の文案の材料に入れない
 function gatherContext(today) {
   const facts = store.load('facts').items.filter(f => !f.embargoed);
-  const upcoming = facts.filter(f => f.kind === '予定' && f.date && f.date >= today && f.date <= addDays(today, 21));
+  // 上の舞台につながる大会は先の予定でも物語の行き先になるので60日先まで、それ以外は3週間先まで渡す
+  const { isMajor } = require('./cups');
+  const upcoming = facts.filter(f => f.kind === '予定' && f.date && f.date >= today && f.date <= addDays(today, isMajor(f.event || f.summary || '') ? 60 : 21));
   const results = facts.filter(f => f.kind === '結果' && (f.date || f.createdAt) >= addDays(today, -21));
   const allDrafts = store.load('drafts').items;
   // 数字の取得（X API）が動いていれば「実際に投稿されたか」が分かるので、投稿されたものだけを
@@ -59,6 +61,7 @@ async function plan(today, max = 4) {
 
 ## 目的
 投稿を見た人が「5人の挑戦の続きを追いたい」と思い、NORTHEPTIONをフォローすること。本数をこなすこと・型をそろえることは目的ではない。
+${require('./growth').currentPolicy()}
 チームのアカウントにしか出せないもの（5人の挑戦の記録：大会ごとの変化、次の舞台、カプコンカップへの道のり）になっているかで選ぶ。選手本人の投稿の焼き直しや、誰が出しても同じ話題は選ばない。
 
 ## 型（どれかを1本ずつ割り当てる）
@@ -78,7 +81,7 @@ async function plan(today, max = 4) {
 - fact_nos・answer_ids・news_ids には使った材料の番号を入れる。ニュースを使うときは、material にニュースの中身と出典URLを書き写す
 - 文案は在庫にため、出すのが目的に効く日にだけオーナーに届く（届くのは今日から数日〜1週間後になることがある）。ある日を過ぎると出す意味がなくなる投稿（大会前の予想・告知に絡む話など）は deadline にその最終日（YYYY-MM-DD）を入れる。無ければ空文字
 
-## 3週間以内の予定
+## これからの予定（上の舞台につながる大会は60日先まで、ほかは3週間先まで）
 ${ctx.upcoming.map(fmtFact).join('\n') || 'なし'}
 
 ## 直近3週間の結果

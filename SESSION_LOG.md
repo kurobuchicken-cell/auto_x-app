@@ -261,3 +261,16 @@
   - 10/26（月）：6時ニュース、7時レポート（初の「投稿→プロフィール→フォロー」）、9時の質問案（双子の指名が出るか）、12時の毛～腕・年間ポイント、18時の判断ログを確認
   - 1〜2週間分の数字がたまったら、プロフィール→フォローの割合（0.19%）が変わるかでPDCA
 - 触ったファイル：index.js、services/sns/（growth.js・xauth.js・cups.js 新規、drafts.js・reminders.js・weekly.js・questions.js・prompt.js・report.js・store.js・startgg.js・events.js）、tools/x-oauth-setup.js（新規）、CLAUDE.md、HISTORY.md、仕様書_auto_x-app.html
+
+## auto_x-app-goalreset-01 追記2（2026-10-24・終盤）
+- 作業環境：家PC
+- やったこと：対戦記録・相手の実績・WWポイント・毎週の見直し（PDCA自動化）を実装し、月曜の処理を本番データのコピーで時刻をずらして通し確認
+- 完了した状態：
+  - 結果報告にstart.ggの対戦記録を添える。強い相手は実績をウェブで出典つき調査（opponents.js、60日キャッシュ、1回最大8人）。相手を立てる書き方（勝ちを主題にしない・ハンドルを付けない）
+  - WWポイント（wwpoints.js）：start.ggから公式配点で計算、公式上位36人中35人一致。書くのはうちの選手の点と9位ライン（今50点）だけ。CC13は今季届かないので来季以降の目標として書く
+  - 月曜レポートでClaudeが「結果・分かったこと・今週の方針・仮説」を書き、方針を18時の判断と週の文案に渡す。間隔を方針にしない・日が空いたことを理由にしない・【要確認】の残る文案は届けない
+  - 上の舞台の大会は60日先まで週の文案の材料に渡す（WW#5 11/29が届くように）。レポートは行の区切りで分割
+- 残課題・次にやること：
+  - 10/26（月）の実際の動きをログで確認（通し確認と同じになるか）
+  - 1〜2週間後、見直しの方針とプロフィール→フォロー率の変化を確認
+- 触ったファイル：services/sns/（opponents.js・wwpoints.js 新規、events.js・research.js・startgg.js・growth.js・reminders.js・report.js・weekly.js・prompt.js・store.js）、CLAUDE.md、HISTORY.md、仕様書_auto_x-app.html

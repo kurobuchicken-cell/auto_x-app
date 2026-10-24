@@ -157,6 +157,13 @@ function summarize(r, mode) {
 }
 
 // 文案の材料に渡す形。並び順を固定しておく
+function setsLines(sets) {
+  if (!sets?.length) return '';
+  const line = s => `${s.won ? '○' : '●'} ${s.opponent}（${s.score}、${s.round}${s.opponentSeed ? `、相手のシード${s.opponentSeed}` : ''}${s.opponentPlacement ? `・最終${s.opponentPlacement}位` : ''}${s.opponentProfile ? `、相手の実績：${s.opponentProfile}（出典 ${s.opponentSource}）` : ''}）`;
+  return `
+  対戦（古い順、start.ggの記録）：${sets.map(line).join(' → ')}`;
+}
+
 function asMaterial(r, mode) {
   const ordered = PLAYER_NAMES.map(n => r.players.find(p => p.player === n)).filter(Boolean);
   return [
@@ -167,7 +174,7 @@ function asMaterial(r, mode) {
     `配信：${r.stream_urls.map(s => `${s.label}：${s.url}`).join(' ／ ') || '【要確認】'}`,
     `全体のトーナメント表：${r.bracket_url || '【要確認】'}`,
     '選手ごと（この並び順で書く）：',
-    ...ordered.map(p => `- ${p.player}：${mode === 'result' ? `順位 ${p.placement || '【要確認】'}` : `${p.pool || 'プール【要確認】'} ${p.bracket_url || ''}`}`),
+    ...ordered.map(p => `- ${p.player}：${mode === 'result' ? `順位 ${p.placement || '【要確認】'}${setsLines(p.sets)}` : `${p.pool || 'プール【要確認】'} ${p.bracket_url || ''}`}`),
     r.notes ? `注意：${r.notes}` : '',
   ].filter(Boolean).join('\n');
 }

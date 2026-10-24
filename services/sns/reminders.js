@@ -83,16 +83,21 @@ async function judgeDelivery(stock, today, now) {
 ## 決め方
 - 在庫があっても、今日出すことが目的に効かなければ出さない（pick は空文字）。出さない日があってよい
 - チームの直近の投稿から日が浅く、続けて出すと前の投稿の効果を薄めるなら待つ
+- 日が空いたこと自体は出す理由にならない。決まった間隔で出すために出さない（オーナーは連日の機械的な通知を望んでいない）
+- 【要確認】が残っている文案は、オーナーに調べものをさせることになるので選ばない
 - 締め切りがある文案は、締め切りに間に合うように出す
 - 近い大会があるなら、その前後の流れに合う文案を選ぶ
 - オーナーからの指示があれば従う
 - reason には、出す（出さない）理由を1〜2文で書く。出すときは、なぜ今日この1本なのかを書く
 
 ## 在庫
-${stock.map(d => `id=${d.id} [${d.type || '型なし'}] ${d.topic}${d.deadline ? `（締め切り${d.deadline}）` : ''}（${todayJST(Date.parse(d.queuedAt))}に作成）`).join('\n')}
+${stock.map(d => `id=${d.id} [${d.type || '型なし'}] ${d.topic}${d.deadline ? `（締め切り${d.deadline}）` : ''}${(d.queuedPatterns || []).some(p => /【要確認/.test(p.text)) ? '（【要確認】あり）' : ''}（${todayJST(Date.parse(d.queuedAt))}に作成）`).join('\n')}
 
 ## チームの直近2週間の投稿（表示と、プロフィールのクリック数）
 ${recent.join('\n') || 'なし'}
+
+## 今週の方針（毎週月曜の見直しで決めたもの）
+${require('./growth').currentPolicy()}
 
 ## 7日以内の大会
 ${upcoming.map(f => `${f.date} ${f.summary}`).join('\n') || 'なし'}

@@ -28,7 +28,7 @@ const EVENTS_Q = `query($slug: String!) {
 const ENTRANT_Q = `query($eventId: ID!, $name: String!) {
   event(id: $eventId) {
     entrants(query: { page: 1, perPage: 10, filter: { name: $name } }) {
-      nodes { name standing { placement } seeds { phaseGroup { id displayIdentifier phase { id name phaseOrder } } } }
+      nodes { id name standing { placement } seeds { phaseGroup { id displayIdentifier phase { id name phaseOrder } } } }
     }
   }
 }`;
@@ -60,6 +60,7 @@ async function lookup(urls, startggNames) {
     players.push({
       player,
       entrant_name: node.name,
+      entrant_id: node.id,
       pool: pg ? `Pool ${pg.displayIdentifier}` : '',
       bracket_url: pg ? `https://www.start.gg/${event.slug}/brackets/${pg.phase.id}/${pg.id}` : '',
       placement: node.standing?.placement ? `${node.standing.placement}位` : '',
@@ -129,4 +130,29 @@ async function recentPlacements() {
   return out;
 }
 
-module.exports = { lookup, slugFrom, upcomingEntries, recentPlacements, USERS };
+const SETS_Q = `query($id: ID!) {
+  entrant(id: $id) {
+    paginatedSets(page: 1, perPage: 30, sortType: RECENT) {
+      nodes { fullRoundText displayScore winnerId slots { entrant { id name initialSeedNum standing { placement } } } }
+    }
+  }
+}`;
+
+// 選手の対戦記録（古い順）。順位だけでは見えない「誰に勝ち、誰に負けたか」を結果報告の物語に使う
+async function setsOf(entrantId) {
+  if (!process.env.STARTGG_TOKEN || !entrantId) return [];
+  const data = await gql(SETS_Q, { id: entrantId });
+  return (data.entrant?.paginatedSets?.nodes || []).reverse().map(s => {
+    const opp = s.slots.map(x => x.entrant).find(e => e && String(e.id) !== String(entrantId));
+    return {
+      won: String(s.winnerId) === String(entrantId),
+      round: s.fullRoundText,
+      score: s.displayScore,
+      opponent: opp?.name || '不明',
+      opponentSeed: opp?.initialSeedNum ?? null,
+      opponentPlacement: opp?.standing?.placement ?? null,
+    };
+  });
+}
+
+module.exports = { lookup, slugFrom, upcomingEntries, recentPlacements, setsOf, USERS };

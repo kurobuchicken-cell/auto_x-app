@@ -165,11 +165,24 @@ async function run(channel, managerId = null) {
   await require('./history').sync().catch(err => console.error('投稿履歴の取り込みエラー:', err.message));
   const snapshot = await fetchSnapshot();
   const history = store.load('metrics').snapshots;
-  const text = `${managerId ? `<@${managerId}> ` : ''}${buildReport(snapshot, history)}\n\n${require('./growth').funnelLines()}`;
+  const growth = require('./growth');
+  let review = '';
+  try {
+    review = `\n\n${growth.reviewLines(await growth.weeklyReview())}`;
+  } catch (err) {
+    console.error('毎週の見直しエラー（レポートは続ける）:', err.message);
+  }
+  const text = `${managerId ? `<@${managerId}> ` : ''}${buildReport(snapshot, history)}\n\n${growth.funnelLines()}${review}`;
   markPosted(snapshot.posts);
   for (const p of snapshot.posts) delete p.fullText;
   store.update('metrics', m => { m.snapshots.push(snapshot); });
-  for (let i = 0; i < text.length; i += 1900) await channel.send(text.slice(i, i + 1900));
+  // 文の途中で切れないよう、行の区切りで分けて送る
+  let chunk = '';
+  for (const line of text.split('\n')) {
+    if (chunk && chunk.length + line.length + 1 > 1900) { await channel.send(chunk); chunk = ''; }
+    chunk = chunk ? `${chunk}\n${line}` : line;
+  }
+  if (chunk) await channel.send(chunk);
 }
 
 module.exports = { run, buildReport, guessType, matchDraft, similarity, fetchSnapshot, checkRecentPosts, getUserId, xGet };

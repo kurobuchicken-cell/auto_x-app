@@ -58,7 +58,7 @@ function resultExtra(r, players) {
     const list = (prev[name] || []).filter(f => f.event !== r.official_name);
     return `${name}：${list.length ? list.map(f => `${f.date || f.createdAt} ${f.event} ${f.placement}`).join(' / ') : '記録なし（今回が初めての記録）'}`;
   });
-  return `各選手の過去の成績（新しい順）：\n${lines.join('\n')}\n\n順位を並べたうえで、前回からの変化（伸びた点・悔しさ・次への課題）を物語として書く。前回の記録が無い選手は比較を作らない。双子のどちらかだけを持ち上げない。`;
+  return `各選手の過去の成績（新しい順）：\n${lines.join('\n')}\n\n順位を並べたうえで、前回からの変化（伸びた点・悔しさ・次への課題）を物語として書く。前回の記録が無い選手は比較を作らない。双子のどちらかだけを持ち上げない。\n材料に対戦記録があれば、シード上位の相手への勝利・惜敗、チームメイト同士の対戦など、順位だけでは見えない場面を1〜2個選んで物語に使ってよい。相手の名前はstart.ggの表記のまま書き、相手を下げる書き方はしない。対戦記録に無いスコアや場面は作らない。相手の実績（SFL出場など）が材料にあれば、その一戦がどれだけの意味を持つかが伝わるように書く（実績は材料にある範囲だけ）。ただし相手を立てる書き方にする：「〇〇選手に勝利」を見出しや主題にしない、「倒した・撃破・下した」などの言葉は使わない、相手のXのハンドル（@）は付けない。書くなら「SFLでも戦う〇〇選手との一戦」のように相手の実績への敬意を主にし、勝敗は控えめな事実として添える。名前を出さずに「SFL出場選手との対戦」とだけ書くのでもよい。`;
 }
 
 // 結果を「結果」の記録として残し、次の大会で前回と比べられるようにする
@@ -83,6 +83,29 @@ async function report(channel, managerId, fact, { force = false, today = todayJS
   if (!complete && !force && process.env.STARTGG_TOKEN && fact.date > addDays(today, -RESULT_WAIT_DAYS)) return false;
 
   const players = PLAYERS.map(p => p.name).filter(n => r.players.some(x => x.player === n && x.placement) || fact.players.includes(n));
+  // 対戦記録が取れなくても結果報告は出す（順位だけの材料で書く）
+  for (const p of r.players) {
+    try {
+      p.sets = await require('./startgg').setsOf(p.entrant_id);
+    } catch (err) {
+      console.error(`対戦記録の取得エラー（${p.player}）:`, err.message);
+    }
+  }
+  try {
+    await require('./opponents').annotate(r.players);
+  } catch (err) {
+    console.error('対戦相手の実績の調査エラー（数字だけで続ける）:', err.message);
+  }
+  // WWの結果報告には、カプコンカップへの道のり（ポイントと地域決勝のライン）を添える。確かめられなければ添えない
+  let wwExtra = '';
+  if (/World Warrior/i.test(`${r.official_name || ''} ${fact.event || ''}`)) {
+    try {
+      const ww = require('./wwpoints');
+      wwExtra = ww.material(await ww.standings(Number((r.date || fact.date || '').slice(0, 4)) || undefined));
+    } catch (err) {
+      console.error('WWのポイントは使わない:', err.message);
+    }
+  }
   await channel.send(research.summarize(r, 'result'));
   await drafts.draftAndSend(channel, research.asMaterial(r, 'result'), {
     type: '大会の物語化',
@@ -91,7 +114,7 @@ async function report(channel, managerId, fact, { force = false, today = todayJS
     source: 'event',
     topic: `${r.official_name || fact.event}の結果報告`,
     factNos: [fact.no],
-    extra: resultExtra(r, players),
+    extra: `${resultExtra(r, players)}${wwExtra ? `\n\n${wwExtra}` : ''}`,
     header: `🏆 **大会の結果報告の文案** <@${managerId}>${complete ? '' : '\n⚠️ 順位が取れなかった選手がいます（【要確認】の部分）'}`,
   });
   saveResultFacts(r, fact);
