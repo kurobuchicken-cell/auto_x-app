@@ -9,8 +9,8 @@ const PATTERN_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        properties: { label: { type: 'string' }, text: { type: 'string' }, note: { type: 'string' } },
-        required: ['label', 'text', 'note'],
+        properties: { label: { type: 'string' }, text: { type: 'string' }, note: { type: 'string' }, reason: { type: 'string' } },
+        required: ['label', 'text', 'note', 'reason'],
         additionalProperties: false,
       },
     },
@@ -84,7 +84,7 @@ ${patterns.map((p, i) => `--- ${i + 1}\n${p.text}`).join('\n')}
   }
 }
 
-async function generatePatterns(material, { type = null, extra = '', count = 3, format = null } = {}) {
+async function generatePatterns(material, { type = null, extra = '', count = 1, format = null } = {}) {
   const formatName = format === '大会告知' ? '大会の告知' : '大会の結果報告';
   const typeLine = (type ? `この投稿の型：「${type}」\n` : '') + (format ? `投稿の形式：「${formatName}」の型を必ず守る\n` : '');
   const ask = count === 1
@@ -99,13 +99,14 @@ ${ask}
 
 - 選手の発言・気持ち・考えとして書くのは、材料で選手自身が言っていることだけ。言っていない気持ちや評価を足さない（選手紹介にある武器・プレースタイルは使ってよいが、本人の発言のようには書かない）
 - text はXにそのまま貼れる投稿本文だけにする。【要確認：〜】は、投稿前に埋める必要がある事実が欠けているときだけ本文に残す
-- アンケートの選択肢、正解発表の文、オーナーが投稿前に確認すべきことは本文に入れず note に書く。note は必要なことだけを短く（字数の説明や、使わなかった材料の説明は書かない）。無ければ空文字`;
+- アンケートの選択肢、正解発表の文、オーナーが投稿前に確認すべきことは本文に入れず note に書く。note は必要なことだけを短く（字数の説明や、使わなかった材料の説明は書かない）。無ければ空文字
+- reason には、なぜこの切り口・書き方にしたかを1〜2文で書く。目的（この投稿を見た人が「5人の挑戦の続きを追いたい」と思い、NORTHEPTIONをフォローする理由になるか）に照らして書く`;
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     const { patterns } = await claude.callJSON(prompt, PATTERN_SCHEMA);
     if (patterns.length >= count) {
       const checked = await verifyFacts(material, extra, patterns.slice(0, count));
-      return checked.map(p => ({ label: p.label, text: enforceRules(p.text, { tournament: !!format }), note: (p.note || '').trim() }));
+      return checked.map(p => ({ label: p.label, text: enforceRules(p.text, { tournament: !!format }), note: (p.note || '').trim(), reason: (p.reason || '').trim() }));
     }
     console.warn(`⚠️ パターン数が${patterns.length}件のため再生成（${attempt}回目）`);
   }
@@ -123,7 +124,7 @@ function logDrafts({ type, topic, patterns, source, factNos = [], url = null }) 
 // スマホで1パターンずつ長押しコピーできるよう、パターンごとに別メッセージで送る
 async function sendPatterns(channel, header, patterns) {
   // メモはコピー用の枠の外に出し、本文と一緒に貼られないようにする
-  const block = p => `\`\`\`\n${p.text}\n\`\`\`${p.note ? `\n📝 ${p.note}` : ''}`;
+  const block = p => `\`\`\`\n${p.text}\n\`\`\`${p.note ? `\n📝 ${p.note}` : ''}${p.reason ? `\n💡 この案にした理由：${p.reason}` : ''}`;
   if (patterns.length === 1) {
     return channel.send(`${header ? `${header}\n` : ''}${block(patterns[0])}`);
   }
@@ -135,7 +136,7 @@ async function sendPatterns(channel, header, patterns) {
   return first || msg;
 }
 
-async function draftAndSend(channel, material, { type = null, header = '', extra = '', source = 'manual', topic = null, count = 3, factNos = [], format = null } = {}) {
+async function draftAndSend(channel, material, { type = null, header = '', extra = '', source = 'manual', topic = null, count = 1, factNos = [], format = null } = {}) {
   const patterns = await generatePatterns(material, { type, extra, count, format });
   const msg = await sendPatterns(channel, header, patterns);
   logDrafts({ type, topic: topic || material.slice(0, 80), patterns, source, factNos, url: msg?.url ?? null });
@@ -146,7 +147,7 @@ async function draftAndSend(channel, material, { type = null, header = '', extra
 
 const QUEUE_MAX_DAYS = 14;
 
-async function enqueue(material, { type = null, header = '', extra = '', source = 'manual', topic = null, count = 3, factNos = [], answerIds = [], deadline = null } = {}) {
+async function enqueue(material, { type = null, header = '', extra = '', source = 'manual', topic = null, count = 1, factNos = [], answerIds = [], deadline = null } = {}) {
   const patterns = await generatePatterns(material, { type, extra, count });
   return store.update('drafts', d => {
     const item = {
@@ -159,7 +160,7 @@ async function enqueue(material, { type = null, header = '', extra = '', source 
 }
 
 // 同じ回答に追記があったとき、まだ送っていない在庫を作り直す（並び順は元のまま）
-async function requeue(id, material, { type = null, header = '', count = 3 } = {}) {
+async function requeue(id, material, { type = null, header = '', count = 1 } = {}) {
   const patterns = await generatePatterns(material, { type, count });
   return store.update('drafts', d => {
     const item = d.items.find(x => x.id === id && x.queuedAt && !x.deliveredAt && !x.droppedAt);

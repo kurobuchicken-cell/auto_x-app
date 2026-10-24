@@ -28,13 +28,13 @@ const BOT_CHANNEL_ID = process.env.DISCORD_BOT_CHANNEL_ID;
 const MANAGER_ID = process.env.DISCORD_MANAGER_ID;
 const STAFF_IDS = [MANAGER_ID, ...(process.env.DISCORD_STAFF_IDS || '').split(',')].map(s => s.trim()).filter(Boolean);
 
-const HELP_TEXT = `📖 **使い方**（何を書いても文案を3パターン返します）
+const HELP_TEXT = `📖 **使い方**（投稿の材料を書くと、いちばん良いと思う文案を1つ、理由つきで返します。指示や感想には文案を作りません）
 ・ネタ・お知らせ・大会予定・結果は、そのまま書けば記録して文案を作ります
 ・大会の予定・結果は、ウェブとstart.ggで裏を取ってから文案にします
 ・大会の3日前〜前日に告知文、終わった翌日に結果報告文を自動で出します
 ・選手がstart.ggで出場登録した大会は、毎日10時に自動で見つけて記録します（書き込み不要）
 ・毎週月曜にSF6のニュースを拾い、週の文案の材料にします
-・週の文案と選手の回答から作った文案は在庫にためます（送るタイミングは投稿計画を作り直し中のため、いまは送りません）。対応待ちは毎日18時にお知らせします
+・週の文案と選手の回答から作った文案は在庫にため、出すのが目的に効く日にだけ、18時に1本を理由つきで届けます（出さない日もあります）。対応待ちも同じ通知にまとめます
 ・まだ出せない情報は「未公開：〜」と書く → 解禁前として扱い、検索にも週の文案にも使いません
 ・「今週の文案」→ 今週の文案を今すぐ作って在庫に入れる
 ・「質問案」→ 選手への質問案を今すぐ作る
@@ -223,11 +223,44 @@ async function handleCommand(message, text) {
   return false;
 }
 
+const INTENT_SCHEMA = {
+  type: 'object',
+  properties: { kind: { type: 'string', enum: ['material', 'instruction', 'other'] }, summary: { type: 'string' } },
+  required: ['kind', 'summary'],
+  additionalProperties: false,
+};
+
+// オーナーの「月曜にまた通知ちょうだい」を投稿のネタとして文案にしてしまったことがあるため、
+// 投稿の材料か、Botへの指示か、ただの感想かを先に見分ける。判定に失敗したら材料として扱う
+async function classifyOwnerText(text) {
+  try {
+    return await require('./services/sns/claude').callJSON(`オーナーがSNS担当のBotのチャンネルに次のように書きました。
+「${text}」
+
+どれに当たるかを選んでください。
+- material：Xの投稿にしたい情報（大会の予定・結果、お知らせ、ネタ、選手の出来事など）
+- instruction：Botや投稿の運用への指示・要望（通知のタイミング、やめてほしいこと、次にしてほしいことなど）
+- other：感想・つぶやき・雑談で、投稿の材料でも指示でもないもの
+summary には、instruction のときだけ指示の中身を1文で書く。それ以外は空文字`, INTENT_SCHEMA, { effort: 'low' });
+  } catch (err) {
+    console.error('書き込みの種類の判定エラー（材料として扱う）:', err.message);
+    return { kind: 'material', summary: '' };
+  }
+}
+
 async function handleFreeText(message, text) {
   const ch = message.channel;
   await message.react('👀');
 
-  // 記録に失敗しても、文案（1対3）は必ず返す
+  const intent = await classifyOwnerText(text);
+  if (intent.kind === 'instruction') {
+    store.update('state', s => { s.ownerInstructions = [...(s.ownerInstructions || []), { at: new Date().toISOString(), text, summary: intent.summary }].slice(-30); });
+    await message.reply(`📌 指示として受け取りました：${intent.summary}\n（文案は作りません。投稿のタイミングの判断に使います。仕組みそのものの変更が必要なものは、次の作業で反映します）`);
+    return;
+  }
+  if (intent.kind === 'other') return;
+
+  // 記録に失敗しても、文案は必ず返す
   let saved = [];
   try {
     saved = facts.save(await facts.extract(text), text);

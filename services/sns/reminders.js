@@ -3,6 +3,7 @@ const report = require('./report');
 const drafts = require('./drafts');
 const { todayJST } = require('./prompt');
 const { addDays } = require('./weekly');
+const claude = require('./claude');
 
 const MAX_REMINDS = 3;
 const QUESTION_GRACE_HOURS = 20;
@@ -57,11 +58,52 @@ function hasEventDraftToday(today) {
   return store.load('drafts').items.some(d => ['event', 'result'].includes(d.source) && d.date === today);
 }
 
-// 在庫を毎日1本ずつ出すのは目的（フォロワー増）とつながっていなかったため、投稿計画ができるまで止める。
-// 止めている間に在庫が期限切れで外れないよう、期限の処理も止める（HISTORY.md 2026-10-24）
-const STOCK_DELIVERY_PAUSED = true;
+const PICK_SCHEMA = {
+  type: 'object',
+  properties: { pick: { type: 'string' }, reason: { type: 'string' } },
+  required: ['pick', 'reason'],
+  additionalProperties: false,
+};
 
-// 毎日18時：対応待ちを1通にまとめてメンションする（在庫の文案の配信は止めている）
+// 在庫を毎日1本ずつ出すのは目的とつながっていなかった（HISTORY.md 2026-10-24）。
+// 在庫があっても出すとは限らず、今日出すことが目的に効くときだけ1本を選ぶ
+async function judgeDelivery(stock, today, now) {
+  if (!stock.length || hasEventDraftToday(today)) return { pick: null, reason: stock.length ? '大会の告知・結果報告の日' : '在庫なし' };
+  const g = store.load('growth');
+  const recent = Object.values(g.posts || {}).filter(p => todayJST(Date.parse(p.createdAt)) >= addDays(today, -14))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .map(p => { const m = p.history[p.history.length - 1]; return `${todayJST(Date.parse(p.createdAt))} 表示${m.imp} プロフィール${m.profile ?? '?'}：${p.text}`; });
+  const upcoming = store.load('facts').items.filter(f => !f.embargoed && f.kind === '予定' && f.date && f.date >= today && f.date <= addDays(today, 7));
+  const instructions = (store.load('state').ownerInstructions || []).slice(-10);
+  const prompt = `今日（${today}）、オーナーにXの投稿案を1本届けるかどうかを決めてください。
+
+## 目的
+この投稿を見た人が「5人の挑戦の続きを追いたい」と思い、NORTHEPTIONをフォローすること。投稿の本数をこなすことは目的ではない。
+
+## 決め方
+- 在庫があっても、今日出すことが目的に効かなければ出さない（pick は空文字）。出さない日があってよい
+- チームの直近の投稿から日が浅く、続けて出すと前の投稿の効果を薄めるなら待つ
+- 締め切りがある文案は、締め切りに間に合うように出す
+- 近い大会があるなら、その前後の流れに合う文案を選ぶ
+- オーナーからの指示があれば従う
+- reason には、出す（出さない）理由を1〜2文で書く。出すときは、なぜ今日この1本なのかを書く
+
+## 在庫
+${stock.map(d => `id=${d.id} [${d.type || '型なし'}] ${d.topic}${d.deadline ? `（締め切り${d.deadline}）` : ''}（${todayJST(Date.parse(d.queuedAt))}に作成）`).join('\n')}
+
+## チームの直近2週間の投稿（表示と、プロフィールのクリック数）
+${recent.join('\n') || 'なし'}
+
+## 7日以内の大会
+${upcoming.map(f => `${f.date} ${f.summary}`).join('\n') || 'なし'}
+
+## オーナーからの指示（新しい順に最大10件）
+${instructions.map(i => `${i.at.slice(0, 10)} ${i.summary || i.text}`).reverse().join('\n') || 'なし'}`;
+  const { pick, reason } = await claude.callJSON(prompt, PICK_SCHEMA, { effort: 'medium' });
+  return { pick: stock.find(d => d.id === pick) || null, reason };
+}
+
+// 毎日18時：今日出すべき投稿案があれば1本と、対応待ちを1通にまとめてメンションする
 async function runDaily(channel, managerId, now = Date.now()) {
   const today = todayJST(now);
   // オーナーが実際に投稿した文（手直し後）を毎日取り込み、翌日からの文案のお手本と「前回」の判断に使う
@@ -70,19 +112,23 @@ async function runDaily(channel, managerId, now = Date.now()) {
   } catch (err) {
     console.error('毎日の投稿確認エラー（続行）:', err.message);
   }
-  let stock = [];
+  drafts.expireQueue(today);
+  drafts.releaseUnpostedAnswers(today);
+  const stock = drafts.queued(today);
   let pick = null;
-  if (!STOCK_DELIVERY_PAUSED) {
-    drafts.expireQueue(today);
-    drafts.releaseUnpostedAnswers(today);
-    stock = drafts.queued(today);
-    pick = hasEventDraftToday(today) ? null : stock[0] || null;
+  let reason = '';
+  try {
+    ({ pick, reason } = await judgeDelivery(stock, today, now));
+    console.log(`🗓️ 今日の投稿案：${pick ? pick.topic : 'なし'}（${reason}）`);
+  } catch (err) {
+    // 判断できない日は出さない（毎日の機械的な配信に戻さない）
+    console.error('投稿案を出すかの判断エラー（今日は出さない）:', err.message);
   }
   const items = await collect(now);
   if (!pick && !items.length) return { delivered: null, reminded: 0 };
 
   const lines = [];
-  if (pick) lines.push(`📝 **今日の投稿案です**（在庫：あと${stock.length - 1}本）`);
+  if (pick) lines.push(`📝 **今日の投稿案です**（今夜19時ごろの投稿がおすすめです）\n🗓️ 今日これを出す理由：${reason}`);
   if (items.length) lines.push(`${pick ? '\n' : ''}**対応待ち**\n${items.map(i => `・${i.text}`).join('\n')}`);
   await channel.send(`🔔 <@${managerId}> ${lines.join('\n')}`);
   bumpCounts(items.map(i => i.key));
@@ -90,4 +136,4 @@ async function runDaily(channel, managerId, now = Date.now()) {
   return { delivered: pick, reminded: items.length };
 }
 
-module.exports = { runDaily, collect };
+module.exports = { runDaily, collect, judgeDelivery };

@@ -52,19 +52,14 @@ function gatherContext(today) {
   return { upcoming, results, fresh, answers, news, recentDrafts, tracking };
 }
 
-function typeCounts(recentDrafts, tracking) {
-  const counts = Object.fromEntries(TYPES.map(t => [t, 0]));
-  for (const d of recentDrafts) {
-    const counted = tracking ? d.postedAt : d.source !== 'manual';
-    if (counted && counts[d.type] !== undefined) counts[d.type]++;
-  }
-  return counts;
-}
-
 async function plan(today, max = 4) {
   const ctx = gatherContext(today);
   const fmtFact = f => `#${f.no} [${f.kind}] ${f.date || '日付不明'} ${f.summary}${f.placement ? `（${f.placement}）` : ''}`;
-  const prompt = `今週（${today}の週）にXへ出す投稿を${max >= 3 ? `3本前後（2〜${max}本）` : `${max}本`}計画してください。
+  const prompt = `今週（${today}の週）にXへ出す価値のある投稿を、最大${max}本計画してください。出す価値のあるものが無ければ0本でよい。
+
+## 目的
+投稿を見た人が「5人の挑戦の続きを追いたい」と思い、NORTHEPTIONをフォローすること。本数をこなすこと・型をそろえることは目的ではない。
+チームのアカウントにしか出せないもの（5人の挑戦の記録：大会ごとの変化、次の舞台、カプコンカップへの道のり）になっているかで選ぶ。選手本人の投稿の焼き直しや、誰が出しても同じ話題は選ばない。
 
 ## 型（どれかを1本ずつ割り当てる）
 - 選手の声：選手の回答・発言をもとにする。下の「選手の回答」が無いときは使わない
@@ -75,14 +70,13 @@ async function plan(today, max = 4) {
 ## 決め方
 - 終了から3日を過ぎた大会の振り返り・お礼・結果を主題にしない（時期外れになる）。過去の結果は、次の大会に向けた話の中で比較として使う
 - 3週間以内に大会の予定があるか、直近の結果があれば「大会の物語化」を必ず1本入れる。大会の告知文・結果報告文そのものは別の仕組みで自動で出すので、ここでは大会に向けた物語（準備・意気込み・前回からの変化・次への続き）を書く
-- 型ごとの効果を比べたいので、過去6週の本数が少ない型を優先する。過去6週の型ごとの${ctx.tracking ? '投稿' : '文案'}本数：${JSON.stringify(typeCounts(ctx.recentDrafts, ctx.tracking))}
 - 最近のテーマと同じ話を繰り返さない
 - 1本ずつ単体で読める投稿にする。オーナーはどれか1本だけを投稿することもあるので、今週のほかの投稿を前提にしない（「連載第2回」「アンケートで教えて」のように別の投稿に頼らない）
 - 「前回」「連載の続き」として触れてよいのは、下の「投稿済みのテーマ」と「アカウントの過去の投稿」だけ。未投稿のテーマは、まだ世に出ていない
 - 「アカウントの過去の投稿」と同じ話・同じ切り口（選手紹介、年齢の並び、拠点の紹介、誕生日など）を繰り返さない。続きや新しい角度として触れるのはよい
 - material には、文案を書く人がそれだけで書けるように、使う事実・回答・前回の結果をまとめて書く
 - fact_nos・answer_ids・news_ids には使った材料の番号を入れる。ニュースを使うときは、material にニュースの中身と出典URLを書き写す
-- 文案は在庫にため、毎日1本ずつオーナーに届く（届くのは今日から数日〜1週間後になることがある）。ある日を過ぎると出す意味がなくなる投稿（大会前の予想・告知に絡む話など）は deadline にその最終日（YYYY-MM-DD）を入れる。無ければ空文字
+- 文案は在庫にため、出すのが目的に効く日にだけオーナーに届く（届くのは今日から数日〜1週間後になることがある）。ある日を過ぎると出す意味がなくなる投稿（大会前の予想・告知に絡む話など）は deadline にその最終日（YYYY-MM-DD）を入れる。無ければ空文字
 
 ## 3週間以内の予定
 ${ctx.upcoming.map(fmtFact).join('\n') || 'なし'}
@@ -131,12 +125,16 @@ async function run(channel, managerId, { manual = false } = {}) {
   const max = Math.min(4, STOCK_TARGET - drafts.queued(today).length);
   if (max <= 0) {
     console.log('📦 在庫が1週間分あるため、今週の文案は作らない');
-    if (manual) await channel.send(`📦 在庫が${drafts.queued(today).length}本あるので、新しくは作りませんでした。送るタイミングは投稿計画を作り直し中です。`);
+    if (manual) await channel.send(`📦 在庫が${drafts.queued(today).length}本あるので、新しくは作りませんでした。出すのが目的に効く日に、1本ずつ届けます。`);
     return;
   }
   await require('./history').sync().catch(err => console.error('投稿履歴の取り込みエラー:', err.message));
   const posts = await plan(today, max);
-  if (posts.length === 0) throw new Error('今週の計画が0本でした');
+  if (posts.length === 0) {
+    console.log('📦 今週は出す価値のある文案が無いと判断（0本）');
+    if (manual) await channel.send('📦 今週は、出す価値のある投稿の材料がありませんでした（無理に作りません）。');
+    return;
+  }
 
   let queuedCount = 0;
   for (const [i, post] of posts.entries()) {
@@ -160,7 +158,7 @@ async function run(channel, managerId, { manual = false } = {}) {
   }
   if (queuedCount === 0) throw new Error('今週の文案が1本も作れませんでした');
   console.log(`📦 今週の文案を${queuedCount}本、在庫に入れた`);
-  if (manual) await channel.send(`📦 文案を${queuedCount}本作って在庫に入れました（在庫：${drafts.queued(today).length}本）。送るタイミングは投稿計画を作り直し中です。`);
+  if (manual) await channel.send(`📦 文案を${queuedCount}本作って在庫に入れました（在庫：${drafts.queued(today).length}本）。出すのが目的に効く日に、1本ずつ届けます。`);
 }
 
 module.exports = { run, plan, gatherContext, addDays };
