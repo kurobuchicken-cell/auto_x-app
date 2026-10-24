@@ -209,15 +209,26 @@ function pointsMaterial(snap) {
   const said = snap.ours.filter(r => r.rankText);
   if (!said.length) return '';
   const line = r => `${r.player}は${r.rankText}${r.pointsCertain ? `（${r.points}点）` : ''}`;
-  return `毛～腕トーナメントの年間ポイント（第${snap.lastEvent}回終了時点、TOPANGA公開の集計より）：${said.map(line).join('、')}。年間ポイントについて書いてよいのはこの表現だけ（集計表には記入の乱れがあるため、ここに無い順位・点数・他の選手の順位は書かない。決勝・招待にも触れない）。出典：https://docs.google.com/spreadsheets/d/${snap.sheetId}`;
+  return `毛～腕トーナメントの年間ポイント（第${snap.lastEvent}回終了時点、TOPANGA公開の集計より）：${said.map(line).join('、')}。年間ポイントについて書いてよいのはこの表現だけ（集計表には記入の乱れがあるため、ここに無い順位・点数・他の選手の順位は書かない。決勝・招待にも触れない）。順位はBotが集計表を検算して確かめてあり、オーナーは裏取りしないので、note に順位の確認を頼む文は書かない。出典：https://docs.google.com/spreadsheets/d/${snap.sheetId}`;
 }
 
 // うちの選手が上位にいるときだけ、年間順位の文案を在庫に入れる（同じ話を連発しないよう間をあける）
 async function stockStandings(snap, now) {
+  // 新しい回の結果が出たら、前の回の時点の年間順位は古くなりうるので、まだ届けていない分は外して作り直す
+  const dropped = store.update('drafts', d => {
+    let n = 0;
+    for (const x of d.items) {
+      if (x.source !== 'cup' || !/^毛～腕トーナメント年間ポイント/.test(x.topic || '') || !x.queuedAt || x.deliveredAt || x.droppedAt) continue;
+      if ((x.topic || '').includes(`第${snap.lastEvent}回時点`)) continue;
+      Object.assign(x, { droppedAt: new Date(now).toISOString(), dropReason: '新しい回の結果が出た' });
+      n++;
+    }
+    return n;
+  });
   const inTop = snap.ours.filter(r => r.rankText);
   if (!inTop.length) return false;
   const last = store.load('state').topangaPointsStockedAt;
-  if (last && now - Date.parse(last) < POINTS_STOCK_DAYS * 864e5) return false;
+  if (!dropped && last && now - Date.parse(last) < POINTS_STOCK_DAYS * 864e5) return false;
   store.update('state', s => { s.topangaPointsStockedAt = new Date(now).toISOString(); });
   const today = todayJST(now);
   await drafts.enqueue(pointsMaterial(snap), {
