@@ -57,7 +57,11 @@ function hasEventDraftToday(today) {
   return store.load('drafts').items.some(d => ['event', 'result'].includes(d.source) && d.date === today);
 }
 
-// 毎日18時：在庫の文案を1本と、対応待ちを1通にまとめてメンションする（夜の投稿に間に合う時刻）
+// 在庫を毎日1本ずつ出すのは目的（フォロワー増）とつながっていなかったため、投稿計画ができるまで止める。
+// 止めている間に在庫が期限切れで外れないよう、期限の処理も止める（HISTORY.md 2026-10-24）
+const STOCK_DELIVERY_PAUSED = true;
+
+// 毎日18時：対応待ちを1通にまとめてメンションする（在庫の文案の配信は止めている）
 async function runDaily(channel, managerId, now = Date.now()) {
   const today = todayJST(now);
   // オーナーが実際に投稿した文（手直し後）を毎日取り込み、翌日からの文案のお手本と「前回」の判断に使う
@@ -66,10 +70,14 @@ async function runDaily(channel, managerId, now = Date.now()) {
   } catch (err) {
     console.error('毎日の投稿確認エラー（続行）:', err.message);
   }
-  drafts.expireQueue(today);
-  drafts.releaseUnpostedAnswers(today);
-  const stock = drafts.queued(today);
-  const pick = hasEventDraftToday(today) ? null : stock[0] || null;
+  let stock = [];
+  let pick = null;
+  if (!STOCK_DELIVERY_PAUSED) {
+    drafts.expireQueue(today);
+    drafts.releaseUnpostedAnswers(today);
+    stock = drafts.queued(today);
+    pick = hasEventDraftToday(today) ? null : stock[0] || null;
+  }
   const items = await collect(now);
   if (!pick && !items.length) return { delivered: null, reminded: 0 };
 

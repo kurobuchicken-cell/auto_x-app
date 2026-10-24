@@ -131,7 +131,7 @@ async function run(channel, managerId, { manual = false } = {}) {
   const max = Math.min(4, STOCK_TARGET - drafts.queued(today).length);
   if (max <= 0) {
     console.log('📦 在庫が1週間分あるため、今週の文案は作らない');
-    if (manual) await channel.send(`📦 在庫が${drafts.queued(today).length}本あるので、新しくは作りませんでした。毎日18時に1本ずつ送ります。`);
+    if (manual) await channel.send(`📦 在庫が${drafts.queued(today).length}本あるので、新しくは作りませんでした。送るタイミングは投稿計画を作り直し中です。`);
     return;
   }
   await require('./history').sync().catch(err => console.error('投稿履歴の取り込みエラー:', err.message));
@@ -160,7 +160,7 @@ async function run(channel, managerId, { manual = false } = {}) {
   }
   if (queuedCount === 0) throw new Error('今週の文案が1本も作れませんでした');
   console.log(`📦 今週の文案を${queuedCount}本、在庫に入れた`);
-  if (manual) await channel.send(`📦 文案を${queuedCount}本作って在庫に入れました（在庫：${drafts.queued(today).length}本）。毎日18時に1本ずつ送ります。`);
+  if (manual) await channel.send(`📦 文案を${queuedCount}本作って在庫に入れました（在庫：${drafts.queued(today).length}本）。送るタイミングは投稿計画を作り直し中です。`);
 }
 
 module.exports = { run, plan, gatherContext, addDays };
