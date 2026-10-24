@@ -103,4 +103,30 @@ async function upcomingEntries(from, to) {
   return [...bySlug.values()];
 }
 
-module.exports = { lookup, slugFrom, upcomingEntries, USERS };
+const STANDINGS_Q = `query($slug: String!, $vg: ID!) {
+  user(slug: $slug) {
+    player {
+      recentStandings(videogameId: $vg, limit: 15) {
+        placement
+        container { ... on Event { name numEntrants startAt tournament { name slug } } }
+      }
+    }
+  }
+}`;
+
+// 選手ごとの最近の順位（大会ごとに登録名が違っても、ユーザーから引けば確実に本人の記録になる）
+async function recentPlacements() {
+  if (!process.env.STARTGG_TOKEN) return null;
+  const out = [];
+  for (const [player, slug] of Object.entries(USERS)) {
+    const data = await gql(STANDINGS_Q, { slug, vg: SF6_VIDEOGAME_ID });
+    for (const s of data.user?.player?.recentStandings || []) {
+      const e = s.container;
+      if (!e?.tournament) continue;
+      out.push({ player, slug: `tournament/${e.tournament.slug.replace(/^tournament\//, '')}`, tournament: e.tournament.name, event: e.name, placement: s.placement, entrants: e.numEntrants, date: e.startAt ? jstDate(e.startAt) : null });
+    }
+  }
+  return out;
+}
+
+module.exports = { lookup, slugFrom, upcomingEntries, recentPlacements, USERS };

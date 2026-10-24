@@ -118,6 +118,8 @@ const DAILY_JOBS = [
   { key: 'reminders', hour: 18, run: (ch, now) => reminders.runDaily(ch, MANAGER_ID, now) },
   // 月曜7時のレポートより前に、前日までの投稿の数字をそろえておく
   { key: 'growth', hour: 6, run: (ch, now) => growth.runDaily(ch, MANAGER_ID, now) },
+  // 毎週の小さな大会の結果（18時の投稿案の判断より前に在庫に入れておく）
+  { key: 'cups', hour: 12, run: (ch, now) => require('./services/sns/cups').runDaily(now) },
 ];
 const runningDaily = new Set();
 

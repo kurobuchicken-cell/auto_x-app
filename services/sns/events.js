@@ -133,7 +133,9 @@ async function discoverFromStartgg(today = todayJST()) {
   const startgg = require('./startgg');
   const found = await startgg.upcomingEntries(today, addDays(today, DISCOVER_DAYS_AHEAD));
   if (!found) return [];
-  return recordDiscovered(found, 'start.gg', today);
+  // 上の舞台につながる大会だけを告知・結果報告の流れに乗せる（コミュニティ大会の結果は cups.js が記録だけする）
+  const { isMajor } = require('./cups');
+  return recordDiscovered(found.filter(e => isMajor(e.name)), 'start.gg', today);
 }
 
 // entries：{ name, date, url, players, slug? }。label は記録の出どころ（start.gg／ウェブ検索）
