@@ -14,8 +14,8 @@ const QUESTION_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        properties: { channel: { type: 'string', enum: CHANNELS }, text: { type: 'string' } },
-        required: ['channel', 'text'],
+        properties: { channel: { type: 'string', enum: CHANNELS }, target: { type: 'string' }, text: { type: 'string' } },
+        required: ['channel', 'target', 'text'],
         additionalProperties: false,
       },
     },
@@ -26,6 +26,26 @@ const QUESTION_SCHEMA = {
 
 function playersOf(channelName) {
   return PLAYERS.filter(p => p.channel === channelName).map(p => p.name);
+}
+
+// 2人で1つのチャンネル（双子）は「どちらか答えて」だと誰も答えないため、1人をメンションで指名する。
+// 基本は前回と逆の人。片方しか出ていない大会の話などは、Claudeがその人を選ぶ（2026-10-24オーナー指示）
+function nextTarget(channelName) {
+  const names = playersOf(channelName);
+  if (names.length < 2) return '';
+  const last = store.load('state').sentQuestions.filter(q => q.channelName === channelName && q.target).pop();
+  return last ? names[(names.indexOf(last.target) + 1) % names.length] : names[0];
+}
+
+function normalizeTarget(q) {
+  const names = playersOf(q.channel);
+  if (names.length < 2) return { ...q, target: '' };
+  return { ...q, target: names.includes(q.target) ? q.target : nextTarget(q.channel) };
+}
+
+function mentionOf(name) {
+  const p = PLAYERS.find(x => x.name === name);
+  return p?.discordId ? `<@${p.discordId}> ` : '';
 }
 
 async function generate(instruction = '', current = null) {
@@ -42,7 +62,7 @@ async function generate(instruction = '', current = null) {
 - スマホで1〜2行で答えられる、答えやすい具体的な質問にする（「意気込みは？」のような抽象的なものは避ける）
 - 答えがそのまま「上の舞台への挑戦の記録」や「格ゲーを選手の目線で語る」投稿の材料になるものにする
 - 近い大会・直近の結果があれば、それに絡めてよい
-- 双子は2人で1つのチャンネルなので、兄と弟のどちらが答えてもよい形にする
+- target：2人で1つのチャンネル（双子）は、兄か弟のどちらか1人を指名して聞く（target に「双子(兄)」か「双子(弟)」）。基本は${nextTarget('双子') || '双子(兄)'}（前回と逆の人）。ただし、片方しか出ていない大会・イベントの話なら、その人を指名する。質問文は指名した1人に向けて書く（「どちらか」「2人とも」と書かない）。ほかのチャンネルの target は空文字
 - 最近した質問と同じことを聞かない
 - 質問文だけを書く（あいさつや前置きは不要）
 
@@ -57,11 +77,11 @@ ${require('./news').xTopicsBlock(today)}
 
 ${base}`;
   const { questions } = await claude.callJSON(prompt, QUESTION_SCHEMA, { effort: 'medium' });
-  return CHANNELS.map(c => questions.find(q => q.channel === c)).filter(Boolean);
+  return CHANNELS.map(c => questions.find(q => q.channel === c)).filter(Boolean).map(normalizeTarget);
 }
 
 async function postProposal(channel, managerId, questions, note = '') {
-  const body = questions.map(q => `**#${q.channel}**\n> ${q.text}`).join('\n\n');
+  const body = questions.map(q => `**#${q.channel}${q.target ? ` → ${q.target}` : ''}**\n> ${q.text}`).join('\n\n');
   const msg = await channel.send(
     `❓ **選手への質問案${note}** <@${managerId}>\n\n${body}\n\n` +
     `✅ → 各選手のチャンネルに送る　❌ → 今週は送らない\n` +
@@ -108,11 +128,11 @@ async function approve(client, botChannel) {
     const ch = findChannel(client, q.channel);
     if (!ch) { ng.push(`#${q.channel}（チャンネルが見つからない／Botが入っていない）`); continue; }
     try {
-      const sentMsg = await ch.send(`📝 **X投稿用の質問です**（1〜2行の返信で十分です）\n\n${q.text}`);
+      const sentMsg = await ch.send(`${mentionOf(q.target)}📝 **X投稿用の質問です**（1〜2行の返信で十分です）\n\n${q.text}`);
       store.update('state', s => {
-        s.sentQuestions.push({ channelId: ch.id, messageId: sentMsg.id, channelName: q.channel, question: q.text, sentAt: new Date().toISOString() });
+        s.sentQuestions.push({ channelId: ch.id, messageId: sentMsg.id, channelName: q.channel, target: q.target || null, question: q.text, sentAt: new Date().toISOString() });
       });
-      ok.push(`#${q.channel}`);
+      ok.push(`#${q.channel}${q.target ? `（${q.target}）` : ''}`);
     } catch (err) {
       console.error(`質問送信エラー (${q.channel}):`, err);
       ng.push(`#${q.channel}（送信エラー：${err.message}）`);
@@ -149,7 +169,7 @@ function onPlayerMessage(message, staffIds = [], now = Date.now()) {
   const author = message.member?.displayName || message.author.username;
   store.update('state', s => {
     s.answerBuffer = s.answerBuffer || {};
-    const b = s.answerBuffer[message.channelId] || { channelName: q.channelName, question: q.question, questionId: q.messageId, authors: [], parts: [], ids: [] };
+    const b = s.answerBuffer[message.channelId] || { channelName: q.channelName, target: q.target || null, question: q.question, questionId: q.messageId, authors: [], parts: [], ids: [] };
     if (!b.authors.includes(author)) b.authors.push(author);
     b.parts.push(text);
     b.ids.push(message.id);
@@ -192,7 +212,7 @@ function findPrevAnswer(b) {
 }
 
 function answerMaterial(b, author, answer) {
-  return `${playersOf(b.channelName).join('・')}への質問「${b.question}」に、${author}がこう答えた：「${answer}」`;
+  return `${b.target || playersOf(b.channelName).join('・')}への質問「${b.question}」に、${author}がこう答えた：「${answer}」`;
 }
 
 const answerHeader = (b, answer, note = '') => `💬 **#${b.channelName} の回答から${note}**\nQ：${b.question}\nA：${answer}`;
