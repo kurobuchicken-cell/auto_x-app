@@ -11,6 +11,7 @@ const DEFAULTS = {
   metrics: { snapshots: [] },
   posts: { items: [] },
   news: { items: [] },
+  growth: { followers: [], posts: {} },
 };
 
 function filePath(name) {

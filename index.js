@@ -12,6 +12,7 @@ const research = require('./services/sns/research');
 const events = require('./services/sns/events');
 const reminders = require('./services/sns/reminders');
 const news = require('./services/sns/news');
+const growth = require('./services/sns/growth');
 
 const client = new Client({
   intents: [
@@ -115,6 +116,8 @@ const DAILY_JOBS = [
   { key: 'discover', hour: 10, run: (ch, now) => events.discoverFromStartgg(require('./services/sns/prompt').todayJST(now)) },
   { key: 'events', hour: 10, run: (ch, now) => events.runDaily(ch, MANAGER_ID, now) },
   { key: 'reminders', hour: 18, run: (ch, now) => reminders.runDaily(ch, MANAGER_ID, now) },
+  // 月曜7時のレポートより前に、前日までの投稿の数字をそろえておく
+  { key: 'growth', hour: 6, run: (ch, now) => growth.runDaily(ch, MANAGER_ID, now) },
 ];
 const runningDaily = new Set();
 
@@ -154,6 +157,7 @@ setInterval(async () => {
 
   await runDueWeeklyJobs().catch(err => console.error('週次ジョブエラー:', err));
   await runDailyJobs().catch(err => console.error('毎日の処理エラー:', err));
+  await growth.snapshotFollowers().catch(err => console.error('フォロワー数の記録エラー:', err.message));
   await questions.flushAnswers().catch(err => console.error('選手の回答のまとめエラー:', err));
 
   // 9時以降に1日1回メールチェック（再起動で9時台を逃しても当日中に実行される）

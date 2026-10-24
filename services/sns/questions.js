@@ -40,9 +40,9 @@ async function generate(instruction = '', current = null) {
 
 ## 条件
 - スマホで1〜2行で答えられる、答えやすい具体的な質問にする（「意気込みは？」のような抽象的なものは避ける）
-- 答えがそのまま「育成の物語」や「格ゲーを選手の目線で語る」投稿の材料になるものにする
+- 答えがそのまま「上の舞台への挑戦の記録」や「格ゲーを選手の目線で語る」投稿の材料になるものにする
 - 近い大会・直近の結果があれば、それに絡めてよい
-- 双子は2027年1〜3月が受験期。負担にならない軽い質問にし、兄と弟のどちらが答えてもよい形にする
+- 双子は2人で1つのチャンネルなので、兄と弟のどちらが答えてもよい形にする
 - 最近した質問と同じことを聞かない
 - 質問文だけを書く（あいさつや前置きは不要）
 
@@ -108,8 +108,7 @@ async function approve(client, botChannel) {
     const ch = findChannel(client, q.channel);
     if (!ch) { ng.push(`#${q.channel}（チャンネルが見つからない／Botが入っていない）`); continue; }
     try {
-      const prefix = q.channel === '双子' ? '（受験勉強の合間に、無理のない範囲で大丈夫です）\n' : '';
-      const sentMsg = await ch.send(`📝 **X投稿用の質問です**（1〜2行の返信で十分です）\n${prefix}\n${q.text}`);
+      const sentMsg = await ch.send(`📝 **X投稿用の質問です**（1〜2行の返信で十分です）\n\n${q.text}`);
       store.update('state', s => {
         s.sentQuestions.push({ channelId: ch.id, messageId: sentMsg.id, channelName: q.channel, question: q.text, sentAt: new Date().toISOString() });
       });

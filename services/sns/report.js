@@ -165,7 +165,7 @@ async function run(channel, managerId = null) {
   await require('./history').sync().catch(err => console.error('投稿履歴の取り込みエラー:', err.message));
   const snapshot = await fetchSnapshot();
   const history = store.load('metrics').snapshots;
-  const text = `${managerId ? `<@${managerId}> ` : ''}${buildReport(snapshot, history)}`;
+  const text = `${managerId ? `<@${managerId}> ` : ''}${buildReport(snapshot, history)}\n\n${require('./growth').funnelLines()}`;
   markPosted(snapshot.posts);
   for (const p of snapshot.posts) delete p.fullText;
   store.update('metrics', m => { m.snapshots.push(snapshot); });
