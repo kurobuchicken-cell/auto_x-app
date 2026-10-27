@@ -65,10 +65,31 @@ const PICK_SCHEMA = {
   additionalProperties: false,
 };
 
+// Claudeの判断だけでは、話題が違えば「重ならない」と見て、同じ形の投稿を連日届けていた
+// （10/25・10/26。HISTORY.md 2026-10-27）。続けて届けない・同じ型を続けないはコードで守る
+const SAME_TYPE_GAP_DAYS = 3;
+
+function recentlyDelivered(today) {
+  return store.load('drafts').items
+    .filter(d => d.deliveredAt && todayJST(Date.parse(d.deliveredAt)) >= addDays(today, -14))
+    .sort((a, b) => b.deliveredAt.localeCompare(a.deliveredAt));
+}
+
+function eligibleStock(stock, today) {
+  const delivered = recentlyDelivered(today);
+  const urgent = d => d.deadline && d.deadline <= addDays(today, 2);
+  const yesterday = delivered.some(d => todayJST(Date.parse(d.deliveredAt)) >= addDays(today, -1));
+  const recentTypes = new Set(delivered.filter(d => todayJST(Date.parse(d.deliveredAt)) >= addDays(today, -SAME_TYPE_GAP_DAYS)).map(d => d.type).filter(Boolean));
+  return stock.filter(d => urgent(d) || (!yesterday && !recentTypes.has(d.type)));
+}
+
 // 在庫を毎日1本ずつ出すのは目的とつながっていなかった（HISTORY.md 2026-10-24）。
 // 在庫があっても出すとは限らず、今日出すことが目的に効くときだけ1本を選ぶ
-async function judgeDelivery(stock, today, now) {
-  if (!stock.length || hasEventDraftToday(today)) return { pick: null, reason: stock.length ? '大会の告知・結果報告の日' : '在庫なし' };
+async function judgeDelivery(allStock, today, now) {
+  if (!allStock.length || hasEventDraftToday(today)) return { pick: null, reason: allStock.length ? '大会の告知・結果報告の日' : '在庫なし' };
+  const stock = eligibleStock(allStock, today);
+  if (!stock.length) return { pick: null, reason: `昨日届けたか、直近${SAME_TYPE_GAP_DAYS}日に届けたのと同じ型しか無い` };
+  const delivered = recentlyDelivered(today).map(d => `${todayJST(Date.parse(d.deliveredAt))} [${d.type || '型なし'}] ${d.topic}${d.postedAt ? '（投稿済み）' : '（未投稿）'} 締め「${drafts.closingOf(d.postedText || d.patterns?.[0] || '').replace(/\n/g, '')}」`);
   const g = store.load('growth');
   const recent = Object.values(g.posts || {}).filter(p => todayJST(Date.parse(p.createdAt)) >= addDays(today, -14))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -86,12 +107,16 @@ async function judgeDelivery(stock, today, now) {
 - 日が空いたこと自体は出す理由にならない。決まった間隔で出すために出さない（オーナーは連日の機械的な通知を望んでいない）
 - 【要確認】が残っている文案は、オーナーに調べものをさせることになるので選ばない
 - 締め切りがある文案は、締め切りに間に合うように出す
-- 近い大会があるなら、その前後の流れに合う文案を選ぶ
+- 近い大会があるなら、その前後の流れに合う文案を選ぶ。2週間より先の大会に向けた話は早すぎるので待つ
+- 下の「最近届けた文案」と話題が違っても、形（例：数字の伸び→続きを見て）や締めが同じなら、読む人には同じ投稿に見える。続けて出さない
 - オーナーからの指示があれば従う
 - reason には、出す（出さない）理由を1〜2文で書く。出すときは、なぜ今日この1本なのかを書く
 
 ## 在庫
 ${stock.map(d => `id=${d.id} [${d.type || '型なし'}] ${d.topic}${d.deadline ? `（締め切り${d.deadline}）` : ''}${(d.queuedPatterns || []).some(p => /【要確認/.test(p.text)) ? '（【要確認】あり）' : ''}（${todayJST(Date.parse(d.queuedAt))}に作成）`).join('\n')}
+
+## 最近届けた文案（2週間。新しい順）
+${delivered.join('\n') || 'なし'}
 
 ## チームの直近2週間の投稿（表示と、プロフィールのクリック数）
 ${recent.join('\n') || 'なし'}
@@ -141,4 +166,4 @@ async function runDaily(channel, managerId, now = Date.now()) {
   return { delivered: pick, reminded: items.length };
 }
 
-module.exports = { runDaily, collect, judgeDelivery };
+module.exports = { runDaily, collect, judgeDelivery, eligibleStock };

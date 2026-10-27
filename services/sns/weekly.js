@@ -24,8 +24,9 @@ const PLAN_SCHEMA = {
           answer_ids: { type: 'array', items: { type: 'string' } },
           news_ids: { type: 'array', items: { type: 'string' } },
           deadline: { type: 'string' },
+          publish_from: { type: 'string' },
         },
-        required: ['type', 'topic', 'material', 'fact_nos', 'answer_ids', 'news_ids', 'deadline'],
+        required: ['type', 'topic', 'material', 'fact_nos', 'answer_ids', 'news_ids', 'deadline', 'publish_from'],
         additionalProperties: false,
       },
     },
@@ -80,6 +81,7 @@ ${require('./growth').currentPolicy()}
 - material には、文案を書く人がそれだけで書けるように、使う事実・回答・前回の結果をまとめて書く
 - fact_nos・answer_ids・news_ids には使った材料の番号を入れる。ニュースを使うときは、material にニュースの中身と出典URLを書き写す
 - 文案は在庫にため、出すのが目的に効く日にだけオーナーに届く（届くのは今日から数日〜1週間後になることがある）。ある日を過ぎると出す意味がなくなる投稿（大会前の予想・告知に絡む話など）は deadline にその最終日（YYYY-MM-DD）を入れる。無ければ空文字
+- 早く出しすぎると効かない投稿は publish_from に出し始める日（YYYY-MM-DD）を入れる。2週間より先の大会に向けた物語・予想は、大会の約2週間前を publish_from にする（1か月前に出しても大会の頃には忘れられ、直前の告知とも離れすぎる）。今すぐ出してよければ空文字
 
 ## これからの予定（上の舞台につながる大会は60日先まで、ほかは3週間先まで）
 ${ctx.upcoming.map(fmtFact).join('\n') || 'なし'}
@@ -150,6 +152,7 @@ async function run(channel, managerId, { manual = false } = {}) {
         factNos: post.fact_nos,
         answerIds: post.answer_ids,
         deadline: /^\d{4}-\d{2}-\d{2}$/.test(post.deadline) ? post.deadline : null,
+        notBefore: /^\d{4}-\d{2}-\d{2}$/.test(post.publish_from) && post.publish_from > today && !(post.deadline > '' && post.publish_from > post.deadline) ? post.publish_from : null,
         header: `━━━━━━━━━━
 **【${post.type}】${post.topic}**${/^\d{4}-\d{2}-\d{2}$/.test(post.deadline) ? `（${post.deadline}までに投稿）` : ''}`,
       });

@@ -84,13 +84,51 @@ ${patterns.map((p, i) => `--- ${i + 1}\n${p.text}`).join('\n')}
   }
 }
 
+// 締め＝ハッシュタグの直前の段落
+function closingOf(text) {
+  const paras = text.replace(/(\s*#\S+)+\s*$/, '').trim().split(/\n\s*\n/);
+  return paras[paras.length - 1].trim();
+}
+
+// オーナーに届いた最近の文案と在庫の締め。新しい文案が同じ締め方にならないよう見せる
+// （在庫どうしで締めが重なると、数日あけて届いても同じに見える）
+function recentClosings(limit = 10) {
+  const at = d => d.deliveredAt || d.queuedAt || d.date;
+  const shown = store.load('drafts').items
+    .filter(d => !['event', 'result'].includes(d.source) && (d.postedText || d.deliveredAt || isQueued(d) || (d.url && !d.queuedAt)))
+    .sort((a, b) => at(b).localeCompare(at(a)))
+    .slice(0, limit);
+  return shown.flatMap(d => (d.postedText ? [d.postedText] : d.patterns)).map(closingOf).filter(Boolean);
+}
+
+// 「続きを見届けて」が「一緒に追いかけて」に言い換わっただけでも、読む側には同じ締めに見える
+const STOCK_CLOSINGS = ['見届け', '追いかけ', '続き', '見守', '注目して', '応援して'];
+
+function bigrams(s) {
+  const t = s.replace(/\s/g, '');
+  return new Set(Array.from({ length: Math.max(0, t.length - 1) }, (_, i) => t.slice(i, i + 2)));
+}
+
+function similarClosing(closing, recent) {
+  const a = bigrams(closing);
+  return recent.find(r => {
+    if (STOCK_CLOSINGS.some(w => closing.includes(w) && r.includes(w))) return true;
+    const b = bigrams(r);
+    const common = [...a].filter(x => b.has(x)).length;
+    return a.size > 0 && b.size > 0 && common / Math.min(a.size, b.size) >= 0.6;
+  }) || null;
+}
+
+const oneLine = s => s.replace(/\n/g, '');
+
 async function generatePatterns(material, { type = null, extra = '', count = 1, format = null } = {}) {
   const formatName = format === '大会告知' ? '大会の告知' : '大会の結果報告';
   const typeLine = (type ? `この投稿の型：「${type}」\n` : '') + (format ? `投稿の形式：「${formatName}」の型を必ず守る\n` : '');
   const ask = count === 1
     ? 'いちばん良いと思う投稿文案を1つ作ってください。labelには切り口を短く書く。'
     : `投稿文案を${count}パターン作ってください。切り口を変えること（例：シンプル／物語・熱量／ファン巻き込み）。labelには切り口を短く書く。`;
-  const prompt = `以下の材料をもとに、NORTHEPTIONのX投稿文案を作ります。
+  const closings = format ? [] : recentClosings();
+  let prompt = `以下の材料をもとに、NORTHEPTIONのX投稿文案を作ります。
 ${typeLine}
 材料：
 ${material}
@@ -100,12 +138,21 @@ ${ask}
 - 選手の発言・気持ち・考えとして書くのは、材料で選手自身が言っていることだけ。言っていない気持ちや評価を足さない（選手紹介にある武器・プレースタイルは使ってよいが、本人の発言のようには書かない）
 - text はXにそのまま貼れる投稿本文だけにする。【要確認：〜】は、投稿前に埋める必要がある事実が欠けているときだけ本文に残す
 - アンケートの選択肢、正解発表の文、オーナーが投稿前に確認すべきことは本文に入れず note に書く。note は必要なことだけを短く（字数の説明や、使わなかった材料の説明は書かない）。無ければ空文字
-- reason には、なぜこの切り口・書き方にしたかを1〜2文で書く。目的（この投稿を見た人が「5人の挑戦の続きを追いたい」と思い、NORTHEPTIONをフォローする理由になるか）に照らして書く`;
+- reason には、なぜこの切り口・書き方にしたかを1〜2文で書く。目的（この投稿を見た人が「5人の挑戦の続きを追いたい」と思い、NORTHEPTIONをフォローする理由になるか）に照らして書く${closings.length ? `
+- 締め（ハッシュタグの直前の段落）は、下の「最近の締め」と同じ言い回し・同じ型にしない。締め方は毎回変える（事実や数字で言い切る／本人の言葉で終える／次の予定だけを置く／問いかける など）。呼びかけで締めなくてよい
+最近の締め：
+${closings.map(c => `・${oneLine(c)}`).join('\n')}` : ''}`;
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     const { patterns } = await claude.callJSON(prompt, PATTERN_SCHEMA);
     if (patterns.length >= count) {
       const checked = await verifyFacts(material, extra, patterns.slice(0, count));
+      const repeats = checked.map(p => similarClosing(closingOf(p.text), closings)).filter(Boolean);
+      if (repeats.length && attempt === 1) {
+        console.warn(`⚠️ 最近と同じ締めのため再生成：${repeats.map(oneLine).join(' / ')}`);
+        prompt += `\n\n前回作った文案は、締めが最近の投稿と同じ型でした（${repeats.map(r => `「${oneLine(r)}」`).join('、')}に似ている）。締めを別の形にして作り直してください。`;
+        continue;
+      }
       return checked.map(p => ({ label: p.label, text: enforceRules(p.text, { tournament: !!format }), note: (p.note || '').trim(), reason: (p.reason || '').trim() }));
     }
     console.warn(`⚠️ パターン数が${patterns.length}件のため再生成（${attempt}回目）`);
@@ -147,12 +194,12 @@ async function draftAndSend(channel, material, { type = null, header = '', extra
 
 const QUEUE_MAX_DAYS = 14;
 
-async function enqueue(material, { type = null, header = '', extra = '', source = 'manual', topic = null, count = 1, factNos = [], answerIds = [], deadline = null } = {}) {
+async function enqueue(material, { type = null, header = '', extra = '', source = 'manual', topic = null, count = 1, factNos = [], answerIds = [], deadline = null, notBefore = null } = {}) {
   const patterns = await generatePatterns(material, { type, extra, count });
   return store.update('drafts', d => {
     const item = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, date: todayJST(), type, topic: topic || material.slice(0, 80), source, factNos, url: null,
-      patterns: patterns.map(p => p.text), queuedPatterns: patterns, header, answerIds, deadline: deadline || null, queuedAt: new Date().toISOString(),
+      patterns: patterns.map(p => p.text), queuedPatterns: patterns, header, answerIds, deadline: deadline || null, notBefore: notBefore || null, queuedAt: new Date().toISOString(),
     };
     d.items.push(item);
     return item;
@@ -171,12 +218,15 @@ async function requeue(id, material, { type = null, header = '', count = 1 } = {
 }
 
 const isQueued = d => d.queuedAt && !d.deliveredAt && !d.droppedAt;
+// 古さは、出してよくなった日（notBefore）から数える
+const readySince = d => [todayJST(Date.parse(d.queuedAt)), d.notBefore].filter(Boolean).sort().pop();
 
-// 古い順。ただし締め切りが明日までのものは先に出す（FIFOのまま締め切りを過ぎて捨てるのを防ぐ）
+// 古い順。ただし締め切りが明日までのものは先に出す（FIFOのまま締め切りを過ぎて捨てるのを防ぐ）。
+// 出し始める日（notBefore）より前のものは出さない
 function queued(today = todayJST()) {
   const { addDays } = require('./weekly');
   const urgent = d => (d.deadline && d.deadline <= addDays(today, 1) ? 0 : 1);
-  return store.load('drafts').items.filter(isQueued).sort((a, b) => urgent(a) - urgent(b) || a.queuedAt.localeCompare(b.queuedAt));
+  return store.load('drafts').items.filter(d => isQueued(d) && !(d.notBefore > today)).sort((a, b) => urgent(a) - urgent(b) || a.queuedAt.localeCompare(b.queuedAt));
 }
 
 // 締め切り切れ・古すぎる在庫は外し、使った回答は週の文案の材料に戻す
@@ -186,7 +236,7 @@ function expireQueue(today = todayJST()) {
   const dropped = store.update('drafts', d => {
     const out = [];
     for (const item of d.items.filter(isQueued)) {
-      const reason = item.deadline && item.deadline < today ? '締め切り切れ' : todayJST(Date.parse(item.queuedAt)) < addDays(today, -QUEUE_MAX_DAYS) ? '古すぎる' : null;
+      const reason = item.deadline && item.deadline < today ? '締め切り切れ' : readySince(item) < addDays(today, -QUEUE_MAX_DAYS) ? '古すぎる' : null;
       if (!reason) continue;
       item.droppedAt = new Date().toISOString();
       item.dropReason = reason;
@@ -233,4 +283,4 @@ async function deliver(channel, item) {
   });
 }
 
-module.exports = { generatePatterns, draftAndSend, sendPatterns, enforceRules, TYPES, enqueue, requeue, queued, expireQueue, releaseUnpostedAnswers, deliver, isQueued };
+module.exports = { closingOf, similarClosing, recentClosings, generatePatterns, draftAndSend, sendPatterns, enforceRules, TYPES, enqueue, requeue, queued, expireQueue, releaseUnpostedAnswers, deliver, isQueued };
