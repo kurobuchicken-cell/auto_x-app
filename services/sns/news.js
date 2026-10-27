@@ -80,6 +80,7 @@ ${known.join('\n') || 'なし'}`;
     return out;
   });
   for (const n of added) console.log(`📰 SF6のニュースを記録した：${n.date} ${n.title}`);
+  if (added.length) await require('./glossary').learn(added.map(n => `${n.title}：${n.summary}`).join('\n'), today).catch(err => console.error('用語の学習エラー（続行）:', err.message));
 
   const events = r.team_events.filter(e => /^\d{4}-\d{2}-\d{2}$/.test(e.date) && e.date >= today && e.players.length && /^https?:\/\//.test(e.url));
   const found = require('./events').recordDiscovered(events, 'ウェブ検索', today);

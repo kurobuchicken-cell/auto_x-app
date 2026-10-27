@@ -12,6 +12,7 @@ const research = require('./services/sns/research');
 const events = require('./services/sns/events');
 const reminders = require('./services/sns/reminders');
 const news = require('./services/sns/news');
+const glossary = require('./services/sns/glossary');
 const growth = require('./services/sns/growth');
 
 const client = new Client({
@@ -41,7 +42,9 @@ const HELP_TEXT = `📖 **使い方**（投稿の材料を書くと、いちば�
 ・「レポート」→ Xの数字レポートを今すぐ出す
 ・「記録」→ 記録した情報の一覧（🔒は未公開）
 ・「解禁 12」→ #12 を公開扱いにする
-・「削除 12」→ #12 の記録を消す`;
+・「削除 12」→ #12 の記録を消す
+・「用語」→ Botが調べて覚えたSF6の用語の一覧（選手の回答やニュースに出てきたものを自動で調べます）
+・「用語 ズーム：〜」→ 用語の意味を直す・足す`;
 
 async function botChannel() {
   return client.channels.fetch(BOT_CHANNEL_ID);
@@ -214,6 +217,17 @@ async function handleCommand(message, text) {
     }
     const f = facts.release(Number(m[1]));
     await message.reply(f ? `🔓 解禁しました：${facts.format(f)}\n今後の週の文案に使います。` : `#${m[1]} は見つかりませんでした。`);
+    return true;
+  }
+  if (/^用語(一覧)?$/.test(text)) {
+    const items = glossary.list();
+    await message.reply(items.length ? `📖 **覚えたSF6の用語（新しい40件）**\n${items.join('\n')}`.slice(0, 1990) : 'まだ覚えた用語はありません。');
+    return true;
+  }
+  m = text.match(/^用語\s+([^：:]+)[：:]\s*([\s\S]+)$/);
+  if (m) {
+    const r = glossary.set(m[1].trim(), m[2].trim());
+    await message.reply(`📖 「${m[1].trim()}」の意味を${r === 'updated' ? '直しました' : '覚えました'}。`);
     return true;
   }
   m = text.match(/^削除\s*#?(\d+)$/);

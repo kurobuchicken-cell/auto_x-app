@@ -11,6 +11,7 @@ const DEFAULTS = {
   metrics: { snapshots: [] },
   posts: { items: [] },
   news: { items: [] },
+  glossary: { items: [], unresolved: [] },
   growth: { followers: [], posts: {} },
   opponents: { items: {} },
 };

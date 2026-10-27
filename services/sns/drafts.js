@@ -1,5 +1,6 @@
 const claude = require('./claude');
 const store = require('./store');
+const glossary = require('./glossary');
 const { TYPES, todayJST } = require('./prompt');
 
 const PATTERN_SCHEMA = {
@@ -55,12 +56,12 @@ const VERIFY_SCHEMA = {
 
 // 文案を作るときの指示だけでは、材料に無い固有名詞や、選手が言っていない気持ち・評価が
 // 足されるおそれがあるため、材料と照らし合わせる工程を別に通す（2026-10-22オーナー指示）
-async function verifyFacts(material, extra, patterns) {
+async function verifyFacts(material, extra, patterns, terms = '') {
   const prompt = `次のX投稿文案を、材料と照らし合わせて確かめてください。
 
 材料：
 ${material}
-${extra ? `\n補足：\n${extra}\n` : ''}
+${extra ? `\n補足：\n${extra}\n` : ''}${terms}
 文案：
 ${patterns.map((p, i) => `--- ${i + 1}\n${p.text}`).join('\n')}
 
@@ -68,6 +69,7 @@ ${patterns.map((p, i) => `--- ${i + 1}\n${p.text}`).join('\n')}
 - システムに書かれている選手紹介（武器・プレースタイルなど）とチームの情報は事実として扱ってよい。ただし、選手本人がその場で言ったことのようには書かない
 - 選手の気持ち・性格・考え（「〜が一番怖い」「〜が好き」など）は、材料で選手自身が言っているか、選手紹介に書かれているときだけ残す。どちらにも無ければ削る
 - 「」で選手の言葉として書いている部分は、材料にある言葉から意味を変えない
+- SF6の用語の意味が与えられていれば、それと食い違う使い方（別のキャラの技にしている、目的を取り違えている など）を材料にある言い方に戻す。用語の説明を足すことはしない
 - 材料にある内容は削らない。改行・段落・絵文字・ハッシュタグ・【要確認：〜】はそのまま残す
 - 問題が無ければ text は元のまま、removed は空にする。直したときは removed に削った・直した内容を短く書く
 - 文案と同じ数・同じ順で返す`;
@@ -128,11 +130,13 @@ async function generatePatterns(material, { type = null, extra = '', count = 1, 
     ? 'いちばん良いと思う投稿文案を1つ作ってください。labelには切り口を短く書く。'
     : `投稿文案を${count}パターン作ってください。切り口を変えること（例：シンプル／物語・熱量／ファン巻き込み）。labelには切り口を短く書く。`;
   const closings = format ? [] : recentClosings();
+  if (!format) await glossary.learn(`${material}\n${extra}`).catch(err => console.error('用語の学習エラー（続行）:', err.message));
+  const terms = glossary.block(`${material}\n${extra}`);
   let prompt = `以下の材料をもとに、NORTHEPTIONのX投稿文案を作ります。
 ${typeLine}
 材料：
 ${material}
-${extra ? `\n補足：\n${extra}\n` : ''}${styleExamples()}
+${extra ? `\n補足：\n${extra}\n` : ''}${terms}${styleExamples()}
 ${ask}
 
 - 選手の発言・気持ち・考えとして書くのは、材料で選手自身が言っていることだけ。言っていない気持ちや評価を足さない（選手紹介にある武器・プレースタイルは使ってよいが、本人の発言のようには書かない）
@@ -146,7 +150,7 @@ ${closings.map(c => `・${oneLine(c)}`).join('\n')}` : ''}`;
   for (let attempt = 1; attempt <= 2; attempt++) {
     const { patterns } = await claude.callJSON(prompt, PATTERN_SCHEMA);
     if (patterns.length >= count) {
-      const checked = await verifyFacts(material, extra, patterns.slice(0, count));
+      const checked = await verifyFacts(material, extra, patterns.slice(0, count), terms);
       const repeats = checked.map(p => similarClosing(closingOf(p.text), closings)).filter(Boolean);
       if (repeats.length && attempt === 1) {
         console.warn(`⚠️ 最近と同じ締めのため再生成：${repeats.map(oneLine).join(' / ')}`);
