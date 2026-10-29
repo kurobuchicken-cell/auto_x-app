@@ -163,7 +163,7 @@ setInterval(async () => {
   await runDueWeeklyJobs().catch(err => console.error('週次ジョブエラー:', err));
   await runDailyJobs().catch(err => console.error('毎日の処理エラー:', err));
   await growth.snapshotFollowers().catch(err => console.error('フォロワー数の記録エラー:', err.message));
-  await questions.flushAnswers().catch(err => console.error('選手の回答のまとめエラー:', err));
+  await questions.flushAnswers(Date.now(), async text => (await botChannel()).send(`<@${MANAGER_ID}> ${text}`)).catch(err => console.error('選手の回答のまとめエラー:', err));
 
   // 9時以降に1日1回メールチェック（再起動で9時台を逃しても当日中に実行される）
   if (h >= 9 && lastMailCheckDate !== today) {

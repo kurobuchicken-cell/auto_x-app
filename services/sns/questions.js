@@ -6,6 +6,8 @@ const { gatherContext } = require('./weekly');
 
 const CHANNELS = [...new Set(PLAYERS.map(p => p.channel))];
 const ANSWER_WINDOW_DAYS = 7;
+// 講座の確認などは返事に時間がかかるため、答えが来るまで長めに待つ
+const OPEN_QUESTION_DAYS = 14;
 
 const QUESTION_SCHEMA = {
   type: 'object',
@@ -122,15 +124,21 @@ async function approve(client, botChannel) {
   if (!pending) return;
   store.update('state', s => { s.pendingQuestion = null; });
 
+  await sendAll(client, botChannel, pending.questions);
+}
+
+// purpose: 'post'＝X投稿の材料にする質問、'confirm'＝講座の監修など投稿の材料にしない確認（返事はオーナーに知らせるだけ）
+async function sendAll(client, botChannel, list, purpose = 'post') {
   const ok = [];
   const ng = [];
-  for (const q of pending.questions) {
+  for (const q of list) {
     const ch = findChannel(client, q.channel);
     if (!ch) { ng.push(`#${q.channel}（チャンネルが見つからない／Botが入っていない）`); continue; }
     try {
-      const sentMsg = await ch.send(`${mentionOf(q.target)}📝 **X投稿用の質問です**（1〜2行の返信で十分です）\n\n${q.text}`);
+      const head = purpose === 'confirm' ? `📝 **${q.topic || '確認'}の件で教えてください**` : '📝 **X投稿用の質問です**（1〜2行の返信で十分です）';
+      const sentMsg = await ch.send(`${mentionOf(q.target)}${head}\n\n${q.text}`);
       store.update('state', s => {
-        s.sentQuestions.push({ channelId: ch.id, messageId: sentMsg.id, channelName: q.channel, target: q.target || null, question: q.text, sentAt: new Date().toISOString() });
+        s.sentQuestions.push({ channelId: ch.id, messageId: sentMsg.id, channelName: q.channel, target: q.target || null, question: q.text, purpose, topic: q.topic || null, sentAt: new Date().toISOString() });
       });
       ok.push(`#${q.channel}${q.target ? `（${q.target}）` : ''}`);
     } catch (err) {
@@ -141,6 +149,8 @@ async function approve(client, botChannel) {
   await botChannel.send(`✅ 送信しました：${ok.join(' ') || 'なし'}${ng.length ? `\n⚠️ 送れなかった：${ng.join('、')}` : ''}`);
 }
 
+const ask = (client, botChannel, q) => sendAll(client, botChannel, [q], 'confirm');
+
 async function cancel(botChannel) {
   store.update('state', s => { s.pendingQuestion = null; });
   await botChannel.send('今週の質問は送りません。');
@@ -148,10 +158,11 @@ async function cancel(botChannel) {
 
 // 質問を送ったチャンネルで、送ってから一定期間内に選手が書いたものを回答として扱う
 function activeQuestionFor(channelId, now = Date.now()) {
-  const limit = now - ANSWER_WINDOW_DAYS * 24 * 60 * 60 * 1000;
-  return store.load('state').sentQuestions
-    .filter(q => q.channelId === channelId && Date.parse(q.sentAt) >= limit)
-    .pop() || null;
+  const day = 24 * 60 * 60 * 1000;
+  const sent = store.load('state').sentQuestions.filter(q => q.channelId === channelId);
+  return sent.filter(q => Date.parse(q.sentAt) >= now - ANSWER_WINDOW_DAYS * day).pop()
+    || sent.filter(q => q.purpose === 'confirm' && !q.answeredAt && Date.parse(q.sentAt) >= now - OPEN_QUESTION_DAYS * day).pop()
+    || null;
 }
 
 const ANSWER_QUIET_MINUTES = 10;
@@ -169,7 +180,7 @@ function onPlayerMessage(message, staffIds = [], now = Date.now()) {
   const author = message.member?.displayName || message.author.username;
   store.update('state', s => {
     s.answerBuffer = s.answerBuffer || {};
-    const b = s.answerBuffer[message.channelId] || { channelName: q.channelName, target: q.target || null, question: q.question, questionId: q.messageId, authors: [], parts: [], ids: [] };
+    const b = s.answerBuffer[message.channelId] || { channelName: q.channelName, target: q.target || null, question: q.question, questionId: q.messageId, purpose: q.purpose || 'post', topic: q.topic || null, authors: [], parts: [], ids: [] };
     if (!b.authors.includes(author)) b.authors.push(author);
     b.parts.push(text);
     b.ids.push(message.id);
@@ -219,7 +230,7 @@ const answerHeader = (b, answer, note = '') => `💬 **#${b.channelName} の回�
 
 // 最後の書き込みから一定時間たった回答を、まとめて1つの答えとして在庫に入れる。
 // 同じ質問への2回目以降の書き込みは、前の回答と合わせて1つの答えにする（2026-10-22オーナー指示）
-async function flushAnswers(now = Date.now()) {
+async function flushAnswers(now = Date.now(), notify = null) {
   const buffers = store.load('state').answerBuffer || {};
   for (const [channelId, b] of Object.entries(buffers)) {
     if (now - b.lastAt < ANSWER_QUIET_MINUTES * 60 * 1000) continue;
@@ -227,7 +238,7 @@ async function flushAnswers(now = Date.now()) {
     store.update('state', s => { delete s.answerBuffer[channelId]; });
 
     const raw = b.parts.join('\n');
-    const prev = findPrevAnswer(b);
+    let prev = findPrevAnswer(b);
     let judged;
     try {
       judged = await judgeAnswer(b.question, raw, prev?.answer);
@@ -237,7 +248,18 @@ async function flushAnswers(now = Date.now()) {
     }
     // あとで判定が正しかったか確かめられるよう、使わなかった書き込みも全文をログに残す
     if (!judged.is_answer) {
-      console.log(`💤 #${b.channelName} の書き込みは質問への回答ではないため使わない：${raw}`);
+      const other = await matchOpenQuestion(channelId, b, raw, now);
+      if (other) {
+        Object.assign(b, { question: other.question, questionId: other.messageId, purpose: other.purpose || 'post', topic: other.topic || null, target: other.target || null });
+        judged = other.judged;
+        prev = null;
+      } else {
+        console.log(`💤 #${b.channelName} の書き込みは質問への回答ではないため使わない：${raw}`);
+        continue;
+      }
+    }
+    if (b.purpose === 'confirm') {
+      recordConfirm(b, raw, now);
       continue;
     }
     if (prev) {
@@ -263,6 +285,52 @@ async function flushAnswers(now = Date.now()) {
       // 文案にできなくても、回答は週の文案の材料として残す
       console.error('回答の文案づくりエラー（週の文案の材料に回す）:', err);
       store.update('answers', d => { const a = d.items.find(x => x.id === id); if (a) a.usedAt = null; });
+    }
+  }
+  await notifyConfirms(notify);
+}
+
+// 新しい質問を送ったあとに、前の質問（講座の確認など）へ返事が来ることがあるため、
+// 今の質問の答えでなければ、同じチャンネルのまだ答えのない質問にも当ててみる
+async function matchOpenQuestion(channelId, b, raw, now) {
+  const limit = now - OPEN_QUESTION_DAYS * 24 * 60 * 60 * 1000;
+  const answered = new Set(store.load('answers').items.map(a => a.questionId).filter(Boolean));
+  const open = store.load('state').sentQuestions
+    .filter(q => q.channelId === channelId && q.messageId !== b.questionId && Date.parse(q.sentAt) >= limit)
+    .filter(q => (q.purpose === 'confirm' ? !q.answeredAt : !answered.has(q.messageId)))
+    .slice(-2).reverse();
+  for (const q of open) {
+    try {
+      const judged = await judgeAnswer(q.question, raw);
+      if (judged.is_answer) return { ...q, judged };
+    } catch (err) {
+      console.error('前の質問への回答かの判定エラー:', err.message);
+    }
+  }
+  return null;
+}
+
+// 確認の返事は投稿の材料（answers）に混ぜず、原文のまま残してオーナーに知らせる。
+// 知らせられなかったら notified を立てず、次の回（1分後）で送り直す
+function recordConfirm(b, raw, now) {
+  const id = b.ids[0];
+  store.update('state', s => {
+    s.confirmAnswers = s.confirmAnswers || [];
+    s.confirmAnswers.push({ id, channelName: b.channelName, topic: b.topic, question: b.question, author: b.authors.join('・'), raw, at: new Date(now).toISOString(), notified: false });
+    const q = s.sentQuestions.find(x => x.messageId === b.questionId);
+    if (q && !q.answeredAt) q.answeredAt = new Date(now).toISOString();
+  });
+  console.log(`📥 #${b.channelName} から確認の返事（${b.topic || '確認'}）：${raw}`);
+}
+
+async function notifyConfirms(notify) {
+  if (!notify) return;
+  for (const a of (store.load('state').confirmAnswers || []).filter(x => !x.notified)) {
+    try {
+      await notify(`💬 **#${a.channelName} から返事が届きました**（${a.topic || '確認'}）\nQ：${a.question}\nA：${a.raw}`.slice(0, 1900));
+      store.update('state', s => { const x = s.confirmAnswers.find(y => y.id === a.id); if (x) x.notified = true; });
+    } catch (err) {
+      console.error('確認の返事の通知エラー（次の回で送り直す）:', err.message);
     }
   }
 }
@@ -298,4 +366,4 @@ async function mergeAnswer(prev, b, raw, judged, now) {
   }
 }
 
-module.exports = { propose, revise, approve, cancel, onPlayerMessage, flushAnswers, activeQuestionFor, findChannel, CHANNELS };
+module.exports = { propose, revise, approve, cancel, ask, onPlayerMessage, flushAnswers, activeQuestionFor, findChannel, CHANNELS };
