@@ -1,13 +1,13 @@
 const PLAYERS = [
-  { name: 'オニキ', emoji: '🥷', handle: '@oniki_dayo', birth: '1999-12-10', channel: 'oniki',
+  { name: 'オニキ', emoji: '🥷', handle: '@oniki_dayo', birth: '1999-12-10', channel: 'oniki', discordId: '422269740900286464',
     style: 'ゲージ管理・状況管理が武器。チームメイトから「器用」と評される' },
-  { name: 'サトル', emoji: '🌪', handle: '@satoru1_3106', birth: '2007-07-23', channel: 'サトル',
+  { name: 'サトル', emoji: '🌪', handle: '@satoru1_3106', birth: '2007-07-23', channel: 'サトル', discordId: '586929049633292288',
     style: '戦い方が独特でアグレッシブ。チームメイト全員が「独特」と評す' },
   { name: '双子(兄)', emoji: '🦯', handle: '@murasaki_15922', birth: '2011-09-22', channel: '双子', discordId: '1115250965013078086',
     style: '咄嗟のコンボ選択と反応速度が武器。土壇場に強い' },
   { name: '双子(弟)', emoji: '🔥', handle: '@murasaki_15922', birth: '2011-09-22', channel: '双子', discordId: '1291745530631819320',
     style: '対空精度と我慢強さが武器。冷静でじわじわ追い詰めるタイプ' },
-  { name: 'あしゅまる', emoji: '🦯', handle: '@ashumaru_sf6', birth: '2006-11-09', channel: 'あしゅまる',
+  { name: 'あしゅまる', emoji: '🦯', handle: '@ashumaru_sf6', birth: '2006-11-09', channel: 'あしゅまる', discordId: '610689564528476162',
     style: '対空の使い分けとコンボ精度が武器。負けそうな時が一番怖い逆転屋' },
 ];
 

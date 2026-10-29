@@ -136,7 +136,9 @@ async function sendAll(client, botChannel, list, purpose = 'post') {
     if (!ch) { ng.push(`#${q.channel}（チャンネルが見つからない／Botが入っていない）`); continue; }
     try {
       const head = purpose === 'confirm' ? `📝 **${q.topic || '確認'}の件で教えてください**` : '📝 **X投稿用の質問です**（1〜2行の返信で十分です）';
-      const sentMsg = await ch.send(`${mentionOf(q.target)}${head}\n\n${q.text}`);
+      // 1人のチャンネルも、メンションしないと選手が気付かないため必ずメンションする
+      const mention = (q.target ? [q.target] : playersOf(q.channel)).map(mentionOf).join('');
+      const sentMsg = await ch.send(`${mention}${head}\n\n${q.text}`);
       store.update('state', s => {
         s.sentQuestions.push({ channelId: ch.id, messageId: sentMsg.id, channelName: q.channel, target: q.target || null, question: q.text, purpose, topic: q.topic || null, sentAt: new Date().toISOString() });
       });
