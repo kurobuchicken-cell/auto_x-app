@@ -162,8 +162,9 @@ function addDays(dateStr, days) {
   return d.toISOString().split('T')[0];
 }
 
-// 計画の本数とは別に出るもの（大会の告知・結果報告、講座）
-const EVENT_SOURCES = ['event', 'result', 'course'];
+// 計画の本数とは別に出るもの（大会の告知・結果報告は日程が大会で決まり、計画で動かせない）。
+// 講座は水曜に1本と決まっているので計画の本数に含める
+const EVENT_SOURCES = ['event', 'result'];
 
 function postType(tweetId, items) {
   const d = items.find(x => x.tweetId === tweetId);
@@ -197,7 +198,7 @@ function weekCheck(prev, now = Date.now()) {
   const inWeek = iso => { const d = todayJST(Date.parse(iso)); return d >= since && d <= until; };
   const delivered = store.load('drafts').items.filter(d => d.deliveredAt && !EVENT_SOURCES.includes(d.source) && inWeek(d.deliveredAt)).length;
   const allPosts = rows.flatMap(r => r.posts);
-  const eventPosts = allPosts.filter(p => ['大会告知', '大会結果', '講座'].includes(p.type)).length;
+  const eventPosts = allPosts.filter(p => ['大会告知', '大会結果'].includes(p.type)).length;
   const posted = allPosts.length - eventPosts;
   const planned = prev?.planPosts ?? null;
   const postAvg = avgFollows(postDays);
@@ -210,7 +211,7 @@ function weekCheck(prev, now = Date.now()) {
   else verdict = postAvg >= prev.predictedFollows ? '当たり' : '外れ';
   const total = measured.reduce((s, r) => s + r.follows, 0);
   const lines = [
-    `・計画 ${planned ?? '—'}本 → Botが届けた ${delivered}本 → 投稿 ${posted}本（ほかに大会の告知・結果報告・講座 ${eventPosts}本）`,
+    `・計画 ${planned ?? '—'}本 → Botが届けた ${delivered}本 → 投稿 ${posted}本（講座を含む。ほかに大会の告知・結果報告 ${eventPosts}本）`,
     `・新規フォロー（実測）：合計 ${total}人（測れた日 ${measured.length}/7日）。投稿した日の平均 ${postAvg ?? '—'}人／投稿しなかった日の平均 ${avgFollows(quietDays) ?? '—'}人（基準：1日${BASELINE_FOLLOWS_PER_DAY}人）`,
     `・予想：投稿した日の平均 ${prev?.predictedFollows ?? '—'}人 → 判定：${verdict}`,
     ...rows.map(r => `・${r.date} 新規フォロー ${r.follows ?? '測れず'}${r.posts.map(p => `\n　[${p.type}] ${p.text.slice(0, 30)}… 表示${p.m.imp} プロフィール${p.m.profile ?? '?'}`).join('')}`),
@@ -249,7 +250,7 @@ function funnelLines(now = Date.now()) {
 
 // ── 毎週の見直し（PDCAのC→A→次のP） ─────────────────────────────
 
-const PLAN_TYPES = require('./prompt').TYPES;
+const PLAN_TYPES = [...require('./prompt').TYPES, '講座'];
 const MAX_PLAN_POSTS = 14;
 const DEFAULT_PLAN_POSTS = 4;
 
@@ -281,6 +282,8 @@ async function weeklyReview(now = Date.now()) {
   const prev = (store.load('state').reviews || []).slice(-1)[0] || null;
   const check = weekCheck(prev, now);
   const ledger = typeLedger();
+  const courseN = require('./course').thisWeek(todayJST(now)).length;
+  const courseLine = courseN ? `今週は講座が${courseN}本、決まった日に出る（plan_posts と「講座」に含める。減らせない）。` : '';
   const prompt = `NORTHEPTIONのX運用の毎週の見直しです。先週の結果を確かめ、次の一手を決め、今週の計画を数字で立ててください。
 目的：SF6の人たちにNORTHEPTIONをフォローしてもらうこと。測る数字は新規フォロー（自分のフォロワー一覧で毎日実測）。最初から最適でなくてよいが、毎週、予想を立てて数字で確かめ、外れたら変える。
 
@@ -304,8 +307,8 @@ ${ledger.join('\n') || 'まだ記録がない'}
 - decision：判定に応じた次の一手を1〜2文。当たり→続けるか広げる／外れ→何を変えるか、やめるか／実行不足・測れていない→何が止まったか（届ける文案が無かった・投稿されなかった・数字が取れなかった）と、どう直すか。オーナーに作業（理由の記録など）を頼む一手にしない。Botの文案・本数・型・時期で直せることを書く
 - hypothesis：今週確かめる仮説を1文。「どの種類の投稿を何本出すと、投稿した日の新規フォローが基準（1日${BASELINE_FOLLOWS_PER_DAY}人）からどう変わるか」の形にする
 - predicted_follows：今週、投稿した日の新規フォローの平均の予想（人）。基準と上の成績から根拠のある数にする
-- plan_posts：今週、在庫から届ける本数（大会の告知・結果報告は別に自動で出るので含めない。0〜${MAX_PLAN_POSTS}）。本数も仮説の一部として、上の表と成績から決める。出さなければ確かめられず、フォローされる機会も無くなる。本数を減らすなら、その理由を数字で書く
-- plan_types：plan_posts の型ごとの内訳（合計を plan_posts に合わせる）
+- plan_posts：今週届ける本数（講座を含む。大会の告知・結果報告は別に自動で出るので含めない。0〜${MAX_PLAN_POSTS}）。${courseLine}本数も仮説の一部として、上の表と成績から決める。出さなければ確かめられず、フォローされる機会も無くなる。本数を減らすなら、その理由を数字で書く
+- plan_types：plan_posts の型ごとの内訳（合計を plan_posts に合わせる。今週の講座の回は「講座」に入れる）
 - policy：今週の投稿の方針を1〜2文（何を、なぜ）`;
   const r = await require('./claude').callJSON(prompt, REVIEW_SCHEMA, { effort: 'high' });
   const planPosts = Math.max(0, Math.min(MAX_PLAN_POSTS, Math.round(r.plan_posts)));

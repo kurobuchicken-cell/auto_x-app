@@ -58,7 +58,7 @@ function gatherContext(today) {
 async function plan(today, max = 4) {
   const ctx = gatherContext(today);
   const fmtFact = f => `#${f.no} [${f.kind}] ${f.date || '日付不明'} ${f.summary}${f.placement ? `（${f.placement}）` : ''}`;
-  const types = require('./growth').currentPlan().types;
+  const types = require('./growth').currentPlan().types.filter(t => t.type !== '講座');
   const prompt = `今週（${today}の週）にXへ出す投稿を${max}本計画してください。本数は毎週の見直しで決めた計画から出している。ブランドや事実の面で出せない材料しか無いときだけ、本数を減らしてよい（減らしたら、計画が実行できず確かめられない）。${types.length ? `
 型の内訳は今週の計画（${types.map(t => `${t.type}${t.count}本`).join('・')}）に近づける。` : ''}
 
@@ -130,7 +130,8 @@ const MAX_PER_RUN = 7;
 function shortage(today) {
   const plan = require('./growth').currentPlan();
   const { delivered } = require('./reminders').weekProgress(today);
-  return Math.max(0, plan.posts - delivered - drafts.queued(today).length);
+  const courseLeft = require('./course').thisWeek(today).filter(c => !c.deliveredAt).length;
+  return Math.max(0, plan.posts - delivered - courseLeft - drafts.queued(today).length);
 }
 
 async function run(channel, managerId, { manual = false } = {}) {

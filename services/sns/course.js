@@ -3,7 +3,7 @@ const drafts = require('./drafts');
 const { todayJST } = require('./prompt');
 
 // オニキ監修 スト6初心者講座（毎週水曜20時。CLAUDE.md「オニキ監修の初心者講座」）。
-// 在庫の計画の本数とは別枠で、投稿日の昼に予約投稿できるよう届ける。
+// 計画の本数に含めるが、在庫とは別に、投稿日の昼に予約投稿できるよう届ける。
 // 監修が済んで文が確定した回だけ ready にする（監修前の文を届けない）
 const POST_TIME = '20:00';
 
@@ -39,4 +39,12 @@ function pendingItems(today) {
     .map(c => ({ key: `course:${c.no}`, text: `📚 講座「${c.title}」（${c.date} ${POST_TIME}）の文がまだ確定していません（オニキの監修待ち）` }));
 }
 
-module.exports = { runDaily, pendingItems, items, POST_TIME };
+// 月曜始まりの今週に出る回（計画の本数に含め、在庫の文案はその分だけ少なく作る）
+function thisWeek(today) {
+  const { addDays } = require('./weekly');
+  const dow = (new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7;
+  const monday = addDays(today, -dow);
+  return items().filter(c => c.date >= monday && c.date <= addDays(monday, 6));
+}
+
+module.exports = { runDaily, pendingItems, items, thisWeek, POST_TIME };

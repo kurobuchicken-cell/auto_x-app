@@ -62,9 +62,9 @@ async function collect(now) {
   return items.filter(i => remindCount(i.key) < (i.max || MAX_REMINDS));
 }
 
-// 大会の告知・結果報告を出した日は、投稿が1日に重ならないよう在庫からは出さない
+// 大会の告知・結果報告や講座を出した日は、投稿が1日に重ならないよう在庫からは出さない
 function hasEventDraftToday(today) {
-  return store.load('drafts').items.some(d => ['event', 'result'].includes(d.source) && d.date === today);
+  return store.load('drafts').items.some(d => ['event', 'result', 'course'].includes(d.source) && d.date === today);
 }
 
 const PICK_SCHEMA = {
@@ -97,7 +97,7 @@ function eligibleStock(stock, today) {
 function weekProgress(today) {
   const dow = (new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7;
   const monday = addDays(today, -dow);
-  const delivered = store.load('drafts').items.filter(d => d.deliveredAt && !['event', 'result', 'course'].includes(d.source) && todayJST(Date.parse(d.deliveredAt)) >= monday).length;
+  const delivered = store.load('drafts').items.filter(d => d.deliveredAt && !['event', 'result'].includes(d.source) && todayJST(Date.parse(d.deliveredAt)) >= monday).length;
   return { day: dow + 1, monday, delivered };
 }
 
@@ -118,7 +118,7 @@ function deliveryDue(today, allStock) {
 async function judgeDelivery(allStock, today, now) {
   const { plan, delivered, due, need, blockedByEvent } = deliveryDue(today, allStock);
   const progress = `今週の計画 ${plan.posts}本のうち${delivered}本届けた（今日までの目安${due}本）`;
-  if (!need) return { pick: null, reason: blockedByEvent ? `大会の告知・結果報告の日（${progress}）` : `計画どおり（${progress}）` };
+  if (!need) return { pick: null, reason: blockedByEvent ? `大会の告知・結果報告か講座を出す日（${progress}）` : `計画どおり（${progress}）` };
   let stock = eligibleStock(allStock, today);
   if (!stock.length) {
     // 在庫が無くて計画を守れない日は、その場で1本作る（在庫切れで出せない週を作らない）
