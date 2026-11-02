@@ -367,6 +367,7 @@ client.on('messageCreate', async (message) => {
       await questions.revise(message.channel, MANAGER_ID, text);
       return;
     }
+    if (message.reference?.messageId && await require('./services/sns/course').onOwnerReply(message.channel, message.reference.messageId, text).then(ok => { if (ok) message.react('✏️'); return ok; })) return;
     if (await handleCommand(message, text)) return;
     await handleFreeText(message, text);
   } catch (err) {
@@ -378,6 +379,12 @@ client.on('messageCreate', async (message) => {
 client.on('messageReactionAdd', async (reaction, user) => {
   if (user.bot) return;
   if (user.id !== MANAGER_ID) return;
+
+  try {
+    if (await require('./services/sns/course').onOwnerReaction(client, await botChannel(), reaction.message.id, reaction.emoji.name)) return;
+  } catch (err) {
+    console.error('講座の文案のリアクション処理エラー:', err);
+  }
 
   const pending = store.load('state').pendingQuestion;
   if (!pending || reaction.message.id !== pending.messageId) return;

@@ -7,10 +7,10 @@ const { todayJST } = require('./prompt');
 // オニキ監修 スト6初心者講座（毎週水曜20時。CLAUDE.md「オニキ監修の初心者講座」）。
 // 計画の本数に含めるが、在庫とは別に、投稿日の昼に予約投稿できるよう届ける。
 // 監修が済んで文が確定した回だけ ready にする（監修前の文を届けない）。
-// 監修は毎週1回ずつ（2026-11-02オーナー）：2週間前に文案を作り、1週間前に#onikiへ送り、返事で直して確定する
+// 監修は毎週1回ずつ（2026-11-02オーナー）：2週間前に文案を作ってオーナーに届け、✅で#onikiへ送り、返事で直して確定する。
+// 選手に送る文は、今までどおりオーナーが✅してから送る（2026-11-02オーナー）
 const POST_TIME = '20:00';
 const DRAFT_DAYS_BEFORE = 14;
-const SEND_DAYS_BEFORE = 7;
 const NUDGE_DAYS_BEFORE = 3;
 const TOPIC = no => `講座 第${no}回`;
 const COUNT_MARK = '【オニキの回数】';
@@ -37,6 +37,11 @@ const CURRICULUM = [
   [19, '第4章 攻めと実戦', '相手の癖を読む・状況の管理'],
   [20, '第4章 攻めと実戦', '卒業（振り返りと次の目標）'],
 ];
+
+// ハッシュタグは1投稿目だけ（ツリーの2投稿目以降に付けない）。💛はどの投稿からも外す
+function withRules(tweets) {
+  return tweets.map((t, i) => (i === 0 ? drafts.enforceRules(t) : t.replace(/💛/g, '').trim()));
+}
 
 function items() {
   return store.load('course').items;
@@ -105,7 +110,8 @@ ${formatRules(c)}
 ${prev.map(p => `--- ${p.title}\n${p.tweets.join('\n\n（ツリー）\n')}`).join('\n') || 'なし'}
 
 ## 事実の確かめ方
-- スト6のシステム・操作・数字（フレーム、ゲージの本数、ボタンなど）は、公式（streetfighter.com・カプコンのマニュアル）や信頼できる攻略サイトをウェブで確かめてから書く。確かめられないことは書かない
+- スト6のシステム・操作・数字（フレーム、ゲージの本数、ボタンなど）は、公式（streetfighter.com・カプコンのマニュアル game.capcom.com/manual/SF6）を最優先に、攻略サイトで補ってウェブで確かめてから書く。Q&Aサイト（知恵袋など）・個人ブログだけを根拠にしない。確かめられないことは書かない
+- ハッシュタグ（#NthWIN #SF6）は1投稿目の最後だけに付ける
 - sources に確かめたページのURLを入れる
 - tweets にはXにそのまま貼れる本文だけを入れる（1要素＝1投稿）`;
   let r = await claude.researchJSON(prompt, TWEETS_SCHEMA, { effort: 'high' });
@@ -115,7 +121,7 @@ ${prev.map(p => `--- ${p.title}\n${p.tweets.join('\n\n（ツリー）\n')}`).joi
     r = await claude.callJSON(`次の投稿文の、スマホで1行に収まらない長い行（${long.map(l => `「${l}」`).join('、')}）を、読点や意味の切れ目で改行して、1行を全角22文字ほどまでにしてください。言葉は変えない。\n\n${JSON.stringify(r)}`, TWEETS_SCHEMA, { effort: 'low' });
   }
   await glossary.learn(r.tweets.join('\n')).catch(err => console.error('用語の学習エラー（続行）:', err.message));
-  return { tweets: r.tweets.map(t => drafts.enforceRules(t)), sources: r.sources };
+  return { tweets: withRules(r.tweets), sources: r.sources };
 }
 
 // ── 監修（1週間前に送り、返事で直す） ─────────────────────
@@ -154,7 +160,7 @@ ${raw}
 - 返事の意味が分からない・回数が無い・オニキが内容を作り直すと言っている など、確定できないときは unresolved にその理由を書く（確定できるなら空文字）`;
   const r = await claude.callJSON(prompt, APPLY_SCHEMA, { effort: 'medium' });
   if (!r.unresolved && r.tweets.some(t => t.includes(COUNT_MARK))) r.unresolved = 'チャレンジの回数が返事に無い';
-  return { ...r, tweets: r.tweets.map(t => drafts.enforceRules(t)) };
+  return { ...r, tweets: withRules(r.tweets) };
 }
 
 // 毎日：2週間前の回の文案を作り、1週間前の回を#onikiへ送り、返事が無ければ3日前に声をかける
@@ -170,12 +176,10 @@ async function runSupervision(client, botChannel, now = Date.now()) {
       console.error(`講座 第${c.no}回の文案づくりエラー:`, err.message);
     }
   }
-  const questions = require('./questions');
-  for (const c of items().filter(x => !x.ready && x.tweets && !x.sentAt && x.date <= addDays(today, SEND_DAYS_BEFORE) && x.date > today)) {
-    await questions.ask(client, botChannel, { channel: 'oniki', topic: TOPIC(c.no), text: confirmText(c) });
-    const q = store.load('state').sentQuestions.filter(x => x.topic === TOPIC(c.no)).pop();
-    if (q) setItem(c.no, { sentAt: q.sentAt, questionId: q.messageId });
+  for (const c of items().filter(x => !x.ready && x.tweets && !x.ownerMsgId && !x.sentAt && x.date > today)) {
+    await askOwner(botChannel, c, now);
   }
+  const questions = require('./questions');
   for (const c of items().filter(x => !x.ready && x.sentAt && !x.nudgedAt && x.date <= addDays(today, NUDGE_DAYS_BEFORE) && x.date > today)) {
     const q = store.load('state').sentQuestions.find(x => x.messageId === c.questionId);
     if (q?.answeredAt) continue;
@@ -184,6 +188,58 @@ async function runSupervision(client, botChannel, now = Date.now()) {
     await ch.send({ content: `${questions.playersOf('oniki').map(questions.mentionOf).join('')}🙏 講座 第${c.no}回（${c.date.slice(5).replace('-', '/')}(水)）の確認、お手すきのときにお願いします。`, reply: { messageReference: c.questionId } });
     setItem(c.no, { nudgedAt: new Date(now).toISOString() });
   }
+}
+
+// オニキに送る前に、オーナーに文案を届けて✅を待つ。リアクションはこの1通目に付けてもらう
+async function askOwner(botChannel, c, now = Date.now()) {
+  const managerId = process.env.DISCORD_MANAGER_ID;
+  const head = await botChannel.send(`🔔 ${managerId ? `<@${managerId}> ` : ''}📚 **講座 第${c.no}回（${c.date.slice(5).replace('-', '/')}(水)${POST_TIME}投稿）の文案です**
+✅で#onikiへ監修の確認を送ります／このメッセージへの返信で直す指示／❌で作り直し`);
+  await drafts.sendPatterns(botChannel, '', c.tweets.map((text, i) => ({ label: `${i + 1}投稿目`, text, note: '' })));
+  await head.react('✅').catch(() => {});
+  await head.react('❌').catch(() => {});
+  setItem(c.no, { ownerMsgId: head.id, ownerMsgUrl: head.url, ownerAskedAt: new Date(now).toISOString() });
+}
+
+const byOwnerMsg = id => items().find(c => c.ownerMsgId && c.ownerMsgId === id && !c.sentAt);
+
+// オーナーの✅：#onikiへ送る。❌：次の21時に作り直す
+async function onOwnerReaction(client, botChannel, messageId, emoji, now = Date.now()) {
+  const c = byOwnerMsg(messageId);
+  if (!c) return false;
+  if (emoji === '✅') {
+    const questions = require('./questions');
+    await questions.ask(client, botChannel, { channel: 'oniki', topic: TOPIC(c.no), text: confirmText(c) });
+    const q = store.load('state').sentQuestions.filter(x => x.topic === TOPIC(c.no)).pop();
+    if (q) setItem(c.no, { sentAt: q.sentAt, questionId: q.messageId, ownerApprovedAt: new Date(now).toISOString() });
+  } else if (emoji === '❌') {
+    setItem(c.no, { tweets: null, ownerMsgId: null, ownerAskedAt: null });
+    await botChannel.send(`📚 講座 第${c.no}回の文案を作り直します（今夜21時）。`);
+  }
+  return true;
+}
+
+const REVISE_SCHEMA = {
+  type: 'object',
+  properties: { tweets: { type: 'array', items: { type: 'string' } } },
+  required: ['tweets'],
+  additionalProperties: false,
+};
+
+// オーナーの返信：指示どおりに直して、もう一度届ける
+async function onOwnerReply(botChannel, messageId, instruction, now = Date.now()) {
+  const c = byOwnerMsg(messageId);
+  if (!c) return false;
+  const r = await claude.callJSON(`「オニキ監修 スト6初心者講座」第${c.no}回の投稿文を、オーナーの指示どおりに直してください。指示に無いところは変えない。1文ごとに改行し、1行は全角22文字ほどまで。${COUNT_MARK}はそのまま残す。
+
+## 今の投稿文（1要素＝1投稿）
+${JSON.stringify(c.tweets)}
+
+## オーナーの指示
+${instruction}`, REVISE_SCHEMA, { effort: 'medium' });
+  setItem(c.no, { tweets: withRules(r.tweets), ownerMsgId: null });
+  await askOwner(botChannel, { ...c, tweets: withRules(r.tweets) }, now);
+  return true;
 }
 
 // 毎分：オニキの返事を文に反映して確定し、オーナーに知らせる
@@ -230,10 +286,17 @@ async function runDaily(channel, managerId, now = Date.now()) {
 }
 
 // 投稿日の2日前になっても文が確定していない回を、18時の対応待ちに出す
-function pendingItems(today) {
-  return items()
+// オーナーの✅が届いた翌日から、18時の対応待ちに出す（同じ件は3回まで）
+const OWNER_GRACE_HOURS = 20;
+
+function pendingItems(today, now = Date.now()) {
+  const waiting = items()
+    .filter(c => c.ownerMsgId && !c.sentAt && now - Date.parse(c.ownerAskedAt) >= OWNER_GRACE_HOURS * 60 * 60 * 1000)
+    .map(c => ({ key: `courseOwner:${c.no}:${c.ownerMsgId}`, text: `📚 講座 第${c.no}回（${c.date}）の文案が ✅／❌ 待ちです${c.ownerMsgUrl ? `：${c.ownerMsgUrl}` : ''}` }));
+  const late = items()
     .filter(c => !c.ready && c.date >= today && c.date <= addDays(today, 2))
-    .map(c => ({ key: `course:${c.no}`, text: `📚 講座「${c.title}」（${c.date} ${POST_TIME}）の文がまだ確定していません（${c.sentAt ? 'オニキの監修の返事待ち' : '文案ができていない'}）` }));
+    .map(c => ({ key: `course:${c.no}`, text: `📚 講座「${c.title}」（${c.date} ${POST_TIME}）の文がまだ確定していません（${c.sentAt ? 'オニキの監修の返事待ち' : c.ownerMsgId ? 'オーナーの✅待ち' : '文案ができていない'}）` }));
+  return [...waiting, ...late];
 }
 
 // 月曜始まりの今週に出る回（計画の本数に含め、在庫の文案はその分だけ少なく作る）
@@ -243,4 +306,4 @@ function thisWeek(today) {
   return items().filter(c => c.date >= monday && c.date <= addDays(monday, 6));
 }
 
-module.exports = { draftEpisode, runDaily, runSupervision, applyAnswers, pendingItems, items, thisWeek, ensureSchedule, confirmText, POST_TIME, CURRICULUM };
+module.exports = { draftEpisode, onOwnerReaction, onOwnerReply, runDaily, runSupervision, applyAnswers, pendingItems, items, thisWeek, ensureSchedule, confirmText, POST_TIME, CURRICULUM };

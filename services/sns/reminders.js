@@ -50,7 +50,7 @@ async function collect(now) {
     items.push({ key: `found:${f.no}`, max: 1, text: `📅 大会を見つけて記録しました：#${f.no} ${f.summary}（告知は3日前〜前日に自動で出します。違っていれば「削除 ${f.no}」）` });
   }
 
-  items.push(...require('./course').pendingItems(today));
+  items.push(...require('./course').pendingItems(today, now));
 
   // 新規フォローが測れないと毎週の判定が止まるので、2日続けて記録が無ければ知らせる
   const follows = store.load('growth').follows || [];
