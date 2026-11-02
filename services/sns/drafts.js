@@ -123,6 +123,13 @@ function similarClosing(closing, recent) {
 
 const oneLine = s => s.replace(/\n/g, '');
 
+// スマホで1行に収まらない行（全角換算。半角は0.5）。URL・ハッシュタグだけの行は数えない
+const LINE_LIMIT = 26;
+const lineWidth = s => [...s].reduce((n, ch) => n + (ch.charCodeAt(0) < 128 ? 0.5 : 1), 0);
+function longLines(text) {
+  return text.split('\n').filter(l => !/^\s*(https?:\/\/\S+|(#\S+\s*)+)$/.test(l) && lineWidth(l.replace(/https?:\/\/\S+/g, '')) > LINE_LIMIT);
+}
+
 async function generatePatterns(material, { type = null, extra = '', count = 1, format = null } = {}) {
   const formatName = format === '大会告知' ? '大会の告知' : '大会の結果報告';
   const typeLine = (type ? `この投稿の型：「${type}」\n` : '') + (format ? `投稿の形式：「${formatName}」の型を必ず守る\n` : '');
@@ -152,9 +159,16 @@ ${closings.map(c => `・${oneLine(c)}`).join('\n')}` : ''}`;
     if (patterns.length >= count) {
       const checked = await verifyFacts(material, extra, patterns.slice(0, count), terms);
       const repeats = checked.map(p => similarClosing(closingOf(p.text), closings)).filter(Boolean);
-      if (repeats.length && attempt === 1) {
-        console.warn(`⚠️ 最近と同じ締めのため再生成：${repeats.map(oneLine).join(' / ')}`);
-        prompt += `\n\n前回作った文案は、締めが最近の投稿と同じ型でした（${repeats.map(r => `「${oneLine(r)}」`).join('、')}に似ている）。締めを別の形にして作り直してください。`;
+      const long = format ? [] : checked.flatMap(p => longLines(p.text));
+      if ((repeats.length || long.length) && attempt === 1) {
+        if (repeats.length) {
+          console.warn(`⚠️ 最近と同じ締めのため再生成：${repeats.map(oneLine).join(' / ')}`);
+          prompt += `\n\n前回作った文案は、締めが最近の投稿と同じ型でした（${repeats.map(r => `「${oneLine(r)}」`).join('、')}に似ている）。締めを別の形にして作り直してください。`;
+        }
+        if (long.length) {
+          console.warn(`⚠️ 1行が長すぎるため再生成：${long.join(' / ')}`);
+          prompt += `\n\n前回作った文案に、スマホで1行に収まらない長い行がありました（${long.map(l => `「${l}」`).join('、')}）。読点や意味の切れ目で改行し、1行を全角22文字ほどまでにして作り直してください。`;
+        }
         continue;
       }
       return checked.map(p => ({ label: p.label, text: enforceRules(p.text, { tournament: !!format }), note: (p.note || '').trim(), reason: (p.reason || '').trim() }));
@@ -290,4 +304,4 @@ async function deliver(channel, item) {
   });
 }
 
-module.exports = { closingOf, similarClosing, recentClosings, generatePatterns, draftAndSend, sendPatterns, enforceRules, TYPES, enqueue, requeue, queued, expireQueue, releaseUnpostedAnswers, deliver, isQueued };
+module.exports = { longLines, closingOf, similarClosing, recentClosings, generatePatterns, draftAndSend, sendPatterns, enforceRules, TYPES, enqueue, requeue, queued, expireQueue, releaseUnpostedAnswers, deliver, isQueued };
