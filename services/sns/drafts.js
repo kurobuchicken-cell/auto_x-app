@@ -197,6 +197,9 @@ async function draftAndSend(channel, material, { type = null, header = '', extra
 // ── 在庫（まとめて何通も送らず、毎日1本ずつメンションして送る。2026-10-22オーナー指示） ──
 
 const QUEUE_MAX_DAYS = 14;
+// 選ばれないまま残った在庫が枠を埋め、新しい文案が作られなくなった（10/22〜26の5本。HISTORY.md 2026-11-02）。
+// 計画は毎週立て直すので、1週間届かなかった在庫は外して材料に戻す
+const STOCK_MAX_DAYS = 7;
 
 async function enqueue(material, { type = null, header = '', extra = '', source = 'manual', topic = null, count = 1, factNos = [], answerIds = [], deadline = null, notBefore = null } = {}) {
   const patterns = await generatePatterns(material, { type, extra, count });
@@ -240,7 +243,7 @@ function expireQueue(today = todayJST()) {
   const dropped = store.update('drafts', d => {
     const out = [];
     for (const item of d.items.filter(isQueued)) {
-      const reason = item.deadline && item.deadline < today ? '締め切り切れ' : readySince(item) < addDays(today, -QUEUE_MAX_DAYS) ? '古すぎる' : null;
+      const reason = item.deadline && item.deadline < today ? '締め切り切れ' : readySince(item) < addDays(today, -STOCK_MAX_DAYS) ? '古すぎる' : null;
       if (!reason) continue;
       item.droppedAt = new Date().toISOString();
       item.dropReason = reason;

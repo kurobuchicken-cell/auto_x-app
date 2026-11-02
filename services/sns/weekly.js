@@ -58,7 +58,9 @@ function gatherContext(today) {
 async function plan(today, max = 4) {
   const ctx = gatherContext(today);
   const fmtFact = f => `#${f.no} [${f.kind}] ${f.date || '日付不明'} ${f.summary}${f.placement ? `（${f.placement}）` : ''}`;
-  const prompt = `今週（${today}の週）にXへ出す価値のある投稿を、最大${max}本計画してください。出す価値のあるものが無ければ0本でよい。
+  const types = require('./growth').currentPlan().types;
+  const prompt = `今週（${today}の週）にXへ出す投稿を${max}本計画してください。本数は毎週の見直しで決めた計画から出している。ブランドや事実の面で出せない材料しか無いときだけ、本数を減らしてよい（減らしたら、計画が実行できず確かめられない）。${types.length ? `
+型の内訳は今週の計画（${types.map(t => `${t.type}${t.count}本`).join('・')}）に近づける。` : ''}
 
 ## 目的
 投稿を見た人が「5人の挑戦の続きを追いたい」と思い、NORTHEPTIONをフォローすること。本数をこなすこと・型をそろえることは目的ではない。
@@ -80,7 +82,7 @@ ${require('./growth').currentPolicy()}
 - 「アカウントの過去の投稿」と同じ話・同じ切り口（選手紹介、年齢の並び、拠点の紹介、誕生日など）を繰り返さない。続きや新しい角度として触れるのはよい
 - material には、文案を書く人がそれだけで書けるように、使う事実・回答・前回の結果をまとめて書く
 - fact_nos・answer_ids・news_ids には使った材料の番号を入れる。ニュースを使うときは、material にニュースの中身と出典URLを書き写す
-- 文案は在庫にため、出すのが目的に効く日にだけオーナーに届く（届くのは今日から数日〜1週間後になることがある）。ある日を過ぎると出す意味がなくなる投稿（大会前の予想・告知に絡む話など）は deadline にその最終日（YYYY-MM-DD）を入れる。無ければ空文字
+- 文案は在庫にため、今週の計画の本数に合わせて1日1本までオーナーに届く（届くのは今日から数日〜1週間後になることがある）。ある日を過ぎると出す意味がなくなる投稿（大会前の予想・告知に絡む話など）は deadline にその最終日（YYYY-MM-DD）を入れる。無ければ空文字
 - 早く出しすぎると効かない投稿は publish_from に出し始める日（YYYY-MM-DD）を入れる。2週間より先の大会に向けた物語・予想は、大会の約2週間前を publish_from にする（1か月前に出しても大会の頃には忘れられ、直前の告知とも離れすぎる）。今すぐ出してよければ空文字
 
 ## これからの予定（上の舞台につながる大会は60日先まで、ほかは3週間先まで）
@@ -121,25 +123,35 @@ function markUsed(post, today) {
   }
 }
 
-// 在庫と合わせて約1週間分（1日1本）になるように作る
-const STOCK_TARGET = 7;
+// 1回に作る上限（費用と、在庫が古くなるのを抑えるため）
+const MAX_PER_RUN = 7;
+
+// 今週の計画の残りの本数に、届けられる在庫が足りない分
+function shortage(today) {
+  const plan = require('./growth').currentPlan();
+  const { delivered } = require('./reminders').weekProgress(today);
+  return Math.max(0, plan.posts - delivered - drafts.queued(today).length);
+}
 
 async function run(channel, managerId, { manual = false } = {}) {
   const today = todayJST();
   drafts.expireQueue(today);
-  const max = Math.min(4, STOCK_TARGET - drafts.queued(today).length);
+  const max = Math.min(MAX_PER_RUN, shortage(today));
   if (max <= 0) {
-    console.log('📦 在庫が1週間分あるため、今週の文案は作らない');
-    if (manual) await channel.send(`📦 在庫が${drafts.queued(today).length}本あるので、新しくは作りませんでした。出すのが目的に効く日に、1本ずつ届けます。`);
+    console.log('📦 今週の計画の分の在庫があるため、文案は作らない');
+    if (manual) await channel.send(`📦 今週の計画の分の在庫（${drafts.queued(today).length}本）があるので、新しくは作りませんでした。`);
     return;
   }
+  const queuedCount = await fill(today, max);
+  if (queuedCount === 0) throw new Error('今週の文案が1本も作れませんでした');
+  if (manual) await channel.send(`📦 文案を${queuedCount}本作って在庫に入れました（在庫：${drafts.queued(today).length}本）。今週の計画の本数に合わせて、1本ずつ届けます。`);
+}
+
+// 計画の本数に足りない分を作って在庫に入れる。18時に在庫切れのときも呼ぶ
+async function fill(today, max) {
   await require('./history').sync().catch(err => console.error('投稿履歴の取り込みエラー:', err.message));
   const posts = await plan(today, max);
-  if (posts.length === 0) {
-    console.log('📦 今週は出す価値のある文案が無いと判断（0本）');
-    if (manual) await channel.send('📦 今週は、出す価値のある投稿の材料がありませんでした（無理に作りません）。');
-    return;
-  }
+  if (posts.length < max) console.warn(`📦 計画${max}本に対し、作れる材料が${posts.length}本分だけだった`);
 
   let queuedCount = 0;
   for (const [i, post] of posts.entries()) {
@@ -162,9 +174,8 @@ async function run(channel, managerId, { manual = false } = {}) {
       console.error(`週の文案 ${i + 1}本目の生成エラー:`, err);
     }
   }
-  if (queuedCount === 0) throw new Error('今週の文案が1本も作れませんでした');
-  console.log(`📦 今週の文案を${queuedCount}本、在庫に入れた`);
-  if (manual) await channel.send(`📦 文案を${queuedCount}本作って在庫に入れました（在庫：${drafts.queued(today).length}本）。出すのが目的に効く日に、1本ずつ届けます。`);
+  console.log(`📦 文案を${queuedCount}本、在庫に入れた`);
+  return queuedCount;
 }
 
-module.exports = { run, plan, gatherContext, addDays };
+module.exports = { run, fill, plan, gatherContext, addDays };

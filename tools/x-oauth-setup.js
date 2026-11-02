@@ -9,7 +9,7 @@ const path = require('path');
 
 const PORT = 8765;
 const REDIRECT = `http://127.0.0.1:${PORT}/callback`;
-const SCOPES = 'tweet.read users.read offline.access';
+const SCOPES = 'tweet.read users.read follows.read offline.access';
 const VM = 'ubuntu@141.147.175.174';
 const KEY = path.join(__dirname, '..', 'tokens', 'oracle_vm_key');
 const REMOTE = '~/apps/northeption-sns-bot/data/x_oauth.json';

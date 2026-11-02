@@ -166,13 +166,15 @@ async function run(channel, managerId = null) {
   const snapshot = await fetchSnapshot();
   const history = store.load('metrics').snapshots;
   const growth = require('./growth');
+  // 見直しで今週の計画が入る前に、先週の計画に対する結果を出す
+  const funnel = growth.funnelLines();
   let review = '';
   try {
     review = `\n\n${growth.reviewLines(await growth.weeklyReview())}`;
   } catch (err) {
     console.error('毎週の見直しエラー（レポートは続ける）:', err.message);
   }
-  const text = `${managerId ? `<@${managerId}> ` : ''}${buildReport(snapshot, history)}\n\n${growth.funnelLines()}${review}`;
+  const text = `${managerId ? `<@${managerId}> ` : ''}${buildReport(snapshot, history)}\n\n${funnel}${review}`;
   markPosted(snapshot.posts);
   for (const p of snapshot.posts) delete p.fullText;
   store.update('metrics', m => { m.snapshots.push(snapshot); });

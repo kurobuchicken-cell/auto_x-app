@@ -50,6 +50,13 @@ async function collect(now) {
     items.push({ key: `found:${f.no}`, max: 1, text: `📅 大会を見つけて記録しました：#${f.no} ${f.summary}（告知は3日前〜前日に自動で出します。違っていれば「削除 ${f.no}」）` });
   }
 
+  // 新規フォローが測れないと毎週の判定が止まるので、2日続けて記録が無ければ知らせる
+  const follows = store.load('growth').follows || [];
+  const lastFollow = follows.length ? follows[follows.length - 1].date : null;
+  if (!lastFollow || lastFollow < addDays(today, -2)) {
+    items.push({ key: `follows:${lastFollow || 'none'}`, text: `👥 新規フォローが${lastFollow ? `${lastFollow}から` : ''}測れていません（X APIでフォロワー一覧が読めていません。原因の調査が要ります）` });
+  }
+
   return items.filter(i => remindCount(i.key) < (i.max || MAX_REMINDS));
 }
 
@@ -65,8 +72,7 @@ const PICK_SCHEMA = {
   additionalProperties: false,
 };
 
-// Claudeの判断だけでは、話題が違えば「重ならない」と見て、同じ形の投稿を連日届けていた
-// （10/25・10/26。HISTORY.md 2026-10-27）。続けて届けない・同じ型を続けないはコードで守る
+// 同じ型を続けると、話題が違っても読む人には同じ投稿に見える（10/25・10/26。HISTORY.md 2026-10-27）
 const SAME_TYPE_GAP_DAYS = 3;
 
 function recentlyDelivered(today) {
@@ -75,48 +81,75 @@ function recentlyDelivered(today) {
     .sort((a, b) => b.deliveredAt.localeCompare(a.deliveredAt));
 }
 
+const hasUnchecked = d => (d.queuedPatterns || []).some(p => /【要確認/.test(p.text));
+
+// 届けてよい在庫。同じ型が続かないものを優先し、それしか無ければ同じ型でも出す（計画の本数を守るため）
 function eligibleStock(stock, today) {
-  const delivered = recentlyDelivered(today);
-  const urgent = d => d.deadline && d.deadline <= addDays(today, 2);
-  const yesterday = delivered.some(d => todayJST(Date.parse(d.deliveredAt)) >= addDays(today, -1));
-  const recentTypes = new Set(delivered.filter(d => todayJST(Date.parse(d.deliveredAt)) >= addDays(today, -SAME_TYPE_GAP_DAYS)).map(d => d.type).filter(Boolean));
-  return stock.filter(d => urgent(d) || (!yesterday && !recentTypes.has(d.type)));
+  const ok = stock.filter(d => !hasUnchecked(d));
+  const recentTypes = new Set(recentlyDelivered(today).filter(d => todayJST(Date.parse(d.deliveredAt)) >= addDays(today, -SAME_TYPE_GAP_DAYS)).map(d => d.type).filter(Boolean));
+  const fresh = ok.filter(d => !recentTypes.has(d.type));
+  return fresh.length ? fresh : ok;
 }
 
-// 在庫を毎日1本ずつ出すのは目的とつながっていなかった（HISTORY.md 2026-10-24）。
-// 在庫があっても出すとは限らず、今日出すことが目的に効くときだけ1本を選ぶ
+// 月曜始まりの今週、何日目か（1〜7）と、今週届けた本数
+function weekProgress(today) {
+  const dow = (new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7;
+  const monday = addDays(today, -dow);
+  const delivered = store.load('drafts').items.filter(d => d.deliveredAt && !['event', 'result'].includes(d.source) && todayJST(Date.parse(d.deliveredAt)) >= monday).length;
+  return { day: dow + 1, monday, delivered };
+}
+
+// 「出すかどうか」をClaudeの判断に任せると、根拠なく出さない日が続いた（10/27〜11/2の7日間0本。
+// HISTORY.md 2026-11-02）。出すかどうかは毎週の見直しで決めた計画の本数からコードで決め、
+// Claudeには「どれを出すか」だけを選ばせる。計画の本数を週に均等にならして、遅れていれば出す
+function deliveryDue(today, allStock) {
+  const plan = require('./growth').currentPlan();
+  const { day, delivered } = weekProgress(today);
+  const due = Math.ceil((plan.posts * day) / 7);
+  const urgent = allStock.some(d => d.deadline && d.deadline <= addDays(today, 1));
+  const left = plan.posts - delivered;
+  // 大会の告知・結果報告の日は1日に投稿が重ならないよう避ける。ただし残りの日数で計画に届かなくなるなら出す
+  const blockedByEvent = hasEventDraftToday(today) && left < 7 - day + 1;
+  return { plan, delivered, due, need: !blockedByEvent && (delivered < due || urgent), blockedByEvent };
+}
+
 async function judgeDelivery(allStock, today, now) {
-  if (!allStock.length || hasEventDraftToday(today)) return { pick: null, reason: allStock.length ? '大会の告知・結果報告の日' : '在庫なし' };
-  const stock = eligibleStock(allStock, today);
-  if (!stock.length) return { pick: null, reason: `昨日届けたか、直近${SAME_TYPE_GAP_DAYS}日に届けたのと同じ型しか無い` };
-  const delivered = recentlyDelivered(today).map(d => `${todayJST(Date.parse(d.deliveredAt))} [${d.type || '型なし'}] ${d.topic}${d.postedAt ? '（投稿済み）' : '（未投稿）'} 締め「${drafts.closingOf(d.postedText || d.patterns?.[0] || '').replace(/\n/g, '')}」`);
+  const { plan, delivered, due, need, blockedByEvent } = deliveryDue(today, allStock);
+  const progress = `今週の計画 ${plan.posts}本のうち${delivered}本届けた（今日までの目安${due}本）`;
+  if (!need) return { pick: null, reason: blockedByEvent ? `大会の告知・結果報告の日（${progress}）` : `計画どおり（${progress}）` };
+  let stock = eligibleStock(allStock, today);
+  if (!stock.length) {
+    // 在庫が無くて計画を守れない日は、その場で1本作る（在庫切れで出せない週を作らない）
+    await require('./weekly').fill(today, 1).catch(err => console.error('在庫の補充エラー:', err.message));
+    stock = eligibleStock(drafts.queued(today), today);
+  }
+  if (!stock.length) return { pick: null, reason: `届けられる文案が無く、補充もできなかった（${progress}）`, shortfall: true };
+  if (stock.length === 1) return { pick: stock[0], reason: `計画の本数に合わせて届けます（${progress}）` };
+  const deliveredList = recentlyDelivered(today).map(d => `${todayJST(Date.parse(d.deliveredAt))} [${d.type || '型なし'}] ${d.topic}${d.postedAt ? '（投稿済み）' : '（未投稿）'} 締め「${drafts.closingOf(d.postedText || d.patterns?.[0] || '').replace(/\n/g, '')}」`);
   const g = store.load('growth');
   const recent = Object.values(g.posts || {}).filter(p => todayJST(Date.parse(p.createdAt)) >= addDays(today, -14))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     .map(p => { const m = p.history[p.history.length - 1]; return `${todayJST(Date.parse(p.createdAt))} 表示${m.imp} プロフィール${m.profile ?? '?'}：${p.text}`; });
   const upcoming = store.load('facts').items.filter(f => !f.embargoed && f.kind === '予定' && f.date && f.date >= today && f.date <= addDays(today, 7));
   const instructions = (store.load('state').ownerInstructions || []).slice(-10);
-  const prompt = `今日（${today}）、オーナーにXの投稿案を1本届けるかどうかを決めてください。
+  const prompt = `今日（${today}）オーナーに届けるXの投稿案を、在庫から1本選んでください。今日1本届けることは、今週の計画（${progress}）で決まっています。
 
 ## 目的
-この投稿を見た人が「5人の挑戦の続きを追いたい」と思い、NORTHEPTIONをフォローすること。投稿の本数をこなすことは目的ではない。
+この投稿を見た人が「5人の挑戦の続きを追いたい」と思い、NORTHEPTIONをフォローすること。
 
-## 決め方
-- 在庫があっても、今日出すことが目的に効かなければ出さない（pick は空文字）。出さない日があってよい
-- チームの直近の投稿から日が浅く、続けて出すと前の投稿の効果を薄めるなら待つ
-- 日が空いたこと自体は出す理由にならない。決まった間隔で出すために出さない（オーナーは連日の機械的な通知を望んでいない）
-- 【要確認】が残っている文案は、オーナーに調べものをさせることになるので選ばない
-- 締め切りがある文案は、締め切りに間に合うように出す
-- 近い大会があるなら、その前後の流れに合う文案を選ぶ。2週間より先の大会に向けた話は早すぎるので待つ
-- 下の「最近届けた文案」と話題が違っても、形（例：数字の伸び→続きを見て）や締めが同じなら、読む人には同じ投稿に見える。続けて出さない
+## 選び方
+- 今週の計画の型の内訳に近づくものを優先する
+- 締め切りがある文案は、締め切りに間に合うように選ぶ
+- 近い大会があるなら、その前後の流れに合う文案を選ぶ
+- 下の「最近届けた文案」と形（例：数字の伸び→続きを見て）や締めが同じものは後に回す
 - オーナーからの指示があれば従う
-- reason には、出す（出さない）理由を1〜2文で書く。出すときは、なぜ今日この1本なのかを書く
+- pick には在庫の id を必ず1つ入れる。reason には、なぜ今日この1本なのかを1〜2文で書く
 
 ## 在庫
-${stock.map(d => `id=${d.id} [${d.type || '型なし'}] ${d.topic}${d.deadline ? `（締め切り${d.deadline}）` : ''}${(d.queuedPatterns || []).some(p => /【要確認/.test(p.text)) ? '（【要確認】あり）' : ''}（${todayJST(Date.parse(d.queuedAt))}に作成）`).join('\n')}
+${stock.map(d => `id=${d.id} [${d.type || '型なし'}] ${d.topic}${d.deadline ? `（締め切り${d.deadline}）` : ''}（${todayJST(Date.parse(d.queuedAt))}に作成）`).join('\n')}
 
 ## 最近届けた文案（2週間。新しい順）
-${delivered.join('\n') || 'なし'}
+${deliveredList.join('\n') || 'なし'}
 
 ## チームの直近2週間の投稿（表示と、プロフィールのクリック数）
 ${recent.join('\n') || 'なし'}
@@ -129,8 +162,15 @@ ${upcoming.map(f => `${f.date} ${f.summary}`).join('\n') || 'なし'}
 
 ## オーナーからの指示（新しい順に最大10件）
 ${instructions.map(i => `${i.at.slice(0, 10)} ${i.summary || i.text}`).reverse().join('\n') || 'なし'}`;
-  const { pick, reason } = await claude.callJSON(prompt, PICK_SCHEMA, { effort: 'medium' });
-  return { pick: stock.find(d => d.id === pick) || null, reason };
+  try {
+    const { pick, reason } = await claude.callJSON(prompt, PICK_SCHEMA, { effort: 'medium' });
+    const chosen = stock.find(d => d.id === pick);
+    if (chosen) return { pick: chosen, reason };
+    console.error(`選んだ id が在庫に無い（${pick}）。古い順の1本を届ける`);
+  } catch (err) {
+    console.error('どれを届けるかの判断エラー（古い順の1本を届ける）:', err.message);
+  }
+  return { pick: stock[0], reason: `計画の本数に合わせて届けます（${progress}）` };
 }
 
 // 毎日18時：今日出すべき投稿案があれば1本と、対応待ちを1通にまとめてメンションする
@@ -151,8 +191,7 @@ async function runDaily(channel, managerId, now = Date.now()) {
     ({ pick, reason } = await judgeDelivery(stock, today, now));
     console.log(`🗓️ 今日の投稿案：${pick ? pick.topic : 'なし'}（${reason}）`);
   } catch (err) {
-    // 判断できない日は出さない（毎日の機械的な配信に戻さない）
-    console.error('投稿案を出すかの判断エラー（今日は出さない）:', err.message);
+    console.error('投稿案の判断エラー:', err.message);
   }
   const items = await collect(now);
   if (!pick && !items.length) return { delivered: null, reminded: 0 };
@@ -166,4 +205,4 @@ async function runDaily(channel, managerId, now = Date.now()) {
   return { delivered: pick, reminded: items.length };
 }
 
-module.exports = { runDaily, collect, judgeDelivery, eligibleStock };
+module.exports = { runDaily, collect, judgeDelivery, eligibleStock, deliveryDue, weekProgress };

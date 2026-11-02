@@ -4,15 +4,24 @@ const xauth = require('./xauth');
 const { todayJST } = require('./prompt');
 
 // 目的（フォロワー増）に対して「投稿→プロフィール→フォロー」のどこで止まっているかを測る。
-// 投稿ごとのフォロー数は今の契約プランのAPIでは取れないため、フォロワー数を1日4回記録し、
-// 解除の目安（Xアナリティクスで月約400人＝1日約13人）を足し戻して新規フォローを推定する
+// フォロワー数の増減には、Xが整理したアカウントの減りも混ざり、新規フォローの推定に使えなかった
+// （10/25〜11/1 に推定1人、Xアナリティクスでは30人。HISTORY.md 2026-11-02）。
+// 新規フォローは、自分のフォロワー一覧の新しい人を毎日数えて実測する
 const SNAPSHOT_HOURS = [0, 6, 12, 18];
-const BASELINE_UNFOLLOWS_PER_DAY = 13;
 const POST_WINDOW_DAYS = 30;
+
+// Xアナリティクスの過去1年（2025-11-03〜2026-11-02、投稿98本）で、投稿の無い日の新規フォローの中央値
+const BASELINE_FOLLOWS_PER_DAY = 5;
+const YEAR_TABLE = `過去1年の週ごとの投稿数と新規フォロー（Xアナリティクス。中央値）：
+投稿0本の週（14週）42人／1〜2本（21週）42人／3〜4本（12週）54人／5本以上（5週）69人。解除は週92〜110人でほぼ一定
+投稿のない日の新規フォローは1日5人、投稿した日は7人（中央値）
+大きく増えたのは：スポンサーとのフォロー＆RT企画（3/20〜、約1,400人）、固定の投稿「はじめての方へ」（10/21、49万表示で94人）。
+表示が多くても増えない例：双子の誕生日（9/22、16万表示で5人）、11/30〜12/1（326万表示で123人）
+多く投稿した週は大会の週と重なるため、本数だけの効果とは言えない`;
 
 function load() {
   const g = store.load('growth');
-  return { followers: g.followers || [], posts: g.posts || {} };
+  return { followers: g.followers || [], posts: g.posts || {}, follows: g.follows || [] };
 }
 
 function slotKey(now) {
@@ -76,6 +85,47 @@ async function collectPostMetrics(now = Date.now()) {
   return rows.length;
 }
 
+// 自分のフォロワーの読み取りは1人0.001ドル（本人の認証で読むとき）。1日の新規は通常5〜10人なので
+// 50人ずつ読み、前回までに見た人に当たったら止める。初回は数えずに「見た人」をためるだけ
+const FOLLOWS_PAGE = 50;
+const FOLLOWS_MAX_PAGES = 10;
+const KNOWN_KEEP = 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+async function trackFollows(now = Date.now()) {
+  const g = store.load('growth');
+  const known = new Set(g.knownFollowers || []);
+  const lastAt = g.followsFetchedAt ? Date.parse(g.followsFetchedAt) : null;
+  // 6時に読むので、前日6時〜今日6時の分を前日の新規フォローとする（19時ごろの投稿の反応がその日に入る）
+  const date = todayJST(now - DAY_MS);
+  if ((g.follows || []).some(f => f.date === date)) return null;
+  const me = await require('./report').getUserId();
+  const fresh = [];
+  let token = null;
+  let hitKnown = false;
+  let pages = 0;
+  do {
+    const j = await xauth.xUserGet(`/users/${me}/followers?max_results=${known.size ? FOLLOWS_PAGE : 100}${token ? `&pagination_token=${token}` : ''}`);
+    pages++;
+    for (const u of j.data || []) {
+      if (known.has(u.id)) { hitKnown = true; break; }
+      fresh.push(u.id);
+    }
+    token = j.meta?.next_token;
+  } while (known.size && !hitKnown && token && pages < FOLLOWS_MAX_PAGES);
+  const seeding = !known.size;
+  const at = new Date(now).toISOString();
+  // 読めなかった日があると前回からの分がまとめて入るので、何日分かを残して日ごとの比較から外せるようにする
+  const days = lastAt ? Math.max(1, Math.round((now - lastAt) / DAY_MS)) : 1;
+  const entry = seeding ? null : { date, count: fresh.length, days, capped: !hitKnown, source: 'api' };
+  store.update('growth', d => {
+    d.knownFollowers = [...fresh, ...(d.knownFollowers || [])].slice(0, KNOWN_KEEP);
+    d.followsFetchedAt = at;
+    if (entry) d.follows = [...(d.follows || []), entry];
+  });
+  return entry;
+}
+
 // 認証切れは放っておくと黙って測れなくなるので、1回だけオーナーに知らせる
 async function notifyAuthFailure(channel, managerId, err) {
   if (!/X認証/.test(err.message)) return;
@@ -93,118 +143,211 @@ async function runDaily(channel, managerId, now = Date.now()) {
     console.error('投稿の数字の記録エラー:', err.message);
     await notifyAuthFailure(channel, managerId, err).catch(e => console.error('認証切れの通知エラー:', e.message));
   }
+  try {
+    const f = await trackFollows(now);
+    if (f) console.log(`👥 ${f.date} の新規フォロー ${f.count}人${f.days > 1 ? `（${f.days}日分）` : ''}${f.capped ? '（読み取りの上限に達した）' : ''}`);
+  } catch (err) {
+    console.error('新規フォローの記録エラー:', err.message);
+    await notifyAuthFailure(channel, managerId, err).catch(e => console.error('認証切れの通知エラー:', e.message));
+  }
 }
 
 function latest(p) {
   return p.history[p.history.length - 1];
 }
 
-// 日ごとのフォロワーの増減（その日の最後の記録 − 前日の最後の記録）と、新規フォローの推定
-function dailyNet(followers) {
-  const lastOfDay = {};
-  for (const f of followers) lastOfDay[f.slot.slice(0, 10)] = f.count;
-  const days = Object.keys(lastOfDay).sort();
-  return days.slice(1).map((d, i) => {
-    const net = lastOfDay[d] - lastOfDay[days[i]];
-    return { date: d, net, estFollows: Math.max(0, net + BASELINE_UNFOLLOWS_PER_DAY) };
-  });
+function addDays(dateStr, days) {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().split('T')[0];
 }
 
-// 週次レポートに入れる「投稿→プロフィール→フォロー」の要約
-function funnelLines(now = Date.now(), days = 7) {
+const EVENT_SOURCES = ['event', 'result'];
+
+function postType(tweetId, items) {
+  const d = items.find(x => x.tweetId === tweetId);
+  if (!d) return 'その他';
+  if (d.source === 'event') return '大会告知';
+  if (d.source === 'result') return '大会結果';
+  return d.type || 'その他';
+}
+
+// 日ごとの新規フォローと、その日のチームの投稿。何日分かまとめて入った記録は日ごとの比較に使わない
+function dayRows(since, until) {
   const g = load();
-  const since = todayJST(now - days * 24 * 60 * 60 * 1000);
-  const posts = Object.entries(g.posts).filter(([, p]) => todayJST(Date.parse(p.createdAt)) >= since)
-    .sort((a, b) => a[1].createdAt.localeCompare(b[1].createdAt));
-  const net = dailyNet(g.followers).filter(d => d.date >= since);
-  const lines = ['**投稿 → プロフィール → フォロー**'];
-  if (!posts.length) lines.push('・この期間の投稿なし');
-  for (const [, p] of posts) {
-    const m = latest(p);
-    const rate = m.profile != null && m.imp ? `${((m.profile / m.imp) * 100).toFixed(2)}%` : '—';
-    lines.push(`・${todayJST(Date.parse(p.createdAt))} ${p.text.slice(0, 25)}…\n　表示 ${m.imp} → プロフィール ${m.profile ?? '—'}（${rate}）`);
-  }
-  if (net.length) {
-    const sumNet = net.reduce((s, d) => s + d.net, 0);
-    const sumFollows = net.reduce((s, d) => s + d.estFollows, 0);
-    const sumProfile = posts.reduce((s, [, p]) => s + (latest(p).profile || 0), 0);
-    lines.push(`・フォロワーの増減 ${sumNet >= 0 ? '+' : ''}${sumNet}（新規フォローの推定 ${sumFollows}人＝増減＋解除の目安1日${BASELINE_UNFOLLOWS_PER_DAY}人）`);
-    if (sumProfile) lines.push(`・プロフィールに来た人のうちフォローした割合（推定）：${((sumFollows / sumProfile) * 100).toFixed(1)}%`);
-  } else {
-    lines.push('・フォロワー数の記録がまだ2日分ありません');
-  }
-  return lines.join('\n');
+  const items = store.load('drafts').items;
+  const follows = Object.fromEntries(g.follows.filter(f => (f.days || 1) === 1).map(f => [f.date, f.count]));
+  const posts = Object.entries(g.posts).map(([id, p]) => ({ id, date: todayJST(Date.parse(p.createdAt)), type: postType(id, items), m: latest(p), text: p.text }));
+  const rows = [];
+  for (let d = since; d <= until; d = addDays(d, 1)) rows.push({ date: d, follows: follows[d] ?? null, posts: posts.filter(p => p.date === d) });
+  return rows;
 }
 
-// ── 毎週の見直し（PDCAのC→A） ─────────────────────────────
+const avgFollows = rows => (rows.length ? +(rows.reduce((s, r) => s + r.follows, 0) / rows.length).toFixed(1) : null);
 
-// 見直しを始めた時点の基準（2026-10-24、Xアナリティクスで直近3か月18投稿を調べた値）
-const BASELINE = 'プロフィールに来た人のうちフォローした割合は約0.19%（固定の投稿「はじめての方へ」に1.5万人来て28人）。フォローを生んだ投稿は18本中2本だけ';
-const FIRST_HYPOTHESIS = 'プロフィールに来た人は直近の投稿を見てフォローを決める。チームにしか出せない「5人が上の舞台に挑む記録」（大会ごとの変化、トパチャン・カプコンカップへの道のり）を続けて出せば、プロフィールからのフォロー率が上がる';
+// 先週の計画に対する結果。判定はClaudeに任せずコードで出す（作文で「確かめられなかった」と流さないため）
+function weekCheck(prev, now = Date.now()) {
+  const until = todayJST(now - DAY_MS);
+  const since = addDays(until, -6);
+  const rows = dayRows(since, until);
+  const measured = rows.filter(r => r.follows != null);
+  const postDays = measured.filter(r => r.posts.length);
+  const quietDays = measured.filter(r => !r.posts.length);
+  const inWeek = iso => { const d = todayJST(Date.parse(iso)); return d >= since && d <= until; };
+  const delivered = store.load('drafts').items.filter(d => d.deliveredAt && !EVENT_SOURCES.includes(d.source) && inWeek(d.deliveredAt)).length;
+  const allPosts = rows.flatMap(r => r.posts);
+  const eventPosts = allPosts.filter(p => ['大会告知', '大会結果'].includes(p.type)).length;
+  const posted = allPosts.length - eventPosts;
+  const planned = prev?.planPosts ?? null;
+  const postAvg = avgFollows(postDays);
+  let verdict;
+  if (measured.length < 4) verdict = '測れていない';
+  else if (planned && delivered < Math.ceil(planned / 2)) verdict = '実行不足（Botが届けた本数が計画の半分未満）';
+  else if (planned && posted < Math.ceil(planned / 2)) verdict = '実行不足（投稿された本数が計画の半分未満）';
+  else if (!postDays.length) verdict = '投稿した日がない';
+  else if (prev?.predictedFollows == null) verdict = '予想なし';
+  else verdict = postAvg >= prev.predictedFollows ? '当たり' : '外れ';
+  const total = measured.reduce((s, r) => s + r.follows, 0);
+  const lines = [
+    `・計画 ${planned ?? '—'}本 → Botが届けた ${delivered}本 → 投稿 ${posted}本（ほかに大会の告知・結果報告 ${eventPosts}本）`,
+    `・新規フォロー（実測）：合計 ${total}人（測れた日 ${measured.length}/7日）。投稿した日の平均 ${postAvg ?? '—'}人／投稿しなかった日の平均 ${avgFollows(quietDays) ?? '—'}人（基準：1日${BASELINE_FOLLOWS_PER_DAY}人）`,
+    `・予想：投稿した日の平均 ${prev?.predictedFollows ?? '—'}人 → 判定：${verdict}`,
+    ...rows.map(r => `・${r.date} 新規フォロー ${r.follows ?? '測れず'}${r.posts.map(p => `\n　[${p.type}] ${p.text.slice(0, 30)}… 表示${p.m.imp} プロフィール${p.m.profile ?? '?'}`).join('')}`),
+  ];
+  return { verdict, lines, planned, delivered, posted, postAvg };
+}
+
+// 投稿の種類ごとの成績（これまでの記録すべて）。同じ日にほかの投稿があると、どれが効いたか分けられないので
+// 平均はその種類だけを出した日で取り、ほかの投稿と重なった日は本数だけ数える（10/21の94人は固定の投稿と重なっていた）
+function typeLedger() {
+  const g = load();
+  if (!g.follows.length) return [];
+  const dates = g.follows.map(f => f.date).sort();
+  const rows = dayRows(dates[0], dates[dates.length - 1]).filter(r => r.follows != null);
+  const by = {};
+  for (const r of rows) {
+    for (const p of r.posts) {
+      const t = (by[p.type] = by[p.type] || { solo: 0, follows: 0, imp: 0, profile: 0, n: 0, multi: 0 });
+      t.n++;
+      t.imp += p.m.imp || 0;
+      t.profile += p.m.profile || 0;
+      if (r.posts.length > 1) { t.multi++; continue; }
+      t.solo++;
+      t.follows += r.follows;
+    }
+  }
+  return Object.entries(by).sort((a, b) => (b[1].solo ? b[1].follows / b[1].solo : -1) - (a[1].solo ? a[1].follows / a[1].solo : -1))
+    .map(([type, t]) => `・${type}：${t.n}本。その種類だけを出した日（${t.solo}日）の新規フォロー平均 ${t.solo ? (t.follows / t.solo).toFixed(1) : '—'}人${t.multi ? `、ほかの投稿と重なった日${t.multi}本` : ''}。表示平均 ${Math.round(t.imp / t.n)}、プロフィール平均 ${Math.round(t.profile / t.n)}`);
+}
+
+// 週次レポートに入れる「投稿 → プロフィール → フォロー」の要約
+function funnelLines(now = Date.now()) {
+  const prev = (store.load('state').reviews || []).slice(-1)[0] || null;
+  return ['**先週の結果（投稿 → プロフィール → 新規フォロー）**', ...weekCheck(prev, now).lines].join('\n');
+}
+
+// ── 毎週の見直し（PDCAのC→A→次のP） ─────────────────────────────
+
+const PLAN_TYPES = require('./prompt').TYPES;
+const MAX_PLAN_POSTS = 14;
+const DEFAULT_PLAN_POSTS = 4;
 
 const REVIEW_SCHEMA = {
   type: 'object',
   properties: {
     result: { type: 'string' },
     learning: { type: 'string' },
-    policy: { type: 'string' },
+    decision: { type: 'string' },
     hypothesis: { type: 'string' },
+    predicted_follows: { type: 'number' },
+    plan_posts: { type: 'integer' },
+    plan_types: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { type: { type: 'string', enum: PLAN_TYPES }, count: { type: 'integer' } },
+        required: ['type', 'count'],
+        additionalProperties: false,
+      },
+    },
+    policy: { type: 'string' },
   },
-  required: ['result', 'learning', 'policy', 'hypothesis'],
+  required: ['result', 'learning', 'decision', 'hypothesis', 'predicted_follows', 'plan_posts', 'plan_types', 'policy'],
   additionalProperties: false,
 };
 
-function weekData(now, days = 7) {
-  const g = load();
-  const since = todayJST(now - days * 24 * 60 * 60 * 1000);
-  const posts = Object.values(g.posts).filter(p => todayJST(Date.parse(p.createdAt)) >= since).map(p => {
-    const m = latest(p);
-    return `${todayJST(Date.parse(p.createdAt))} 表示${m.imp} プロフィール${m.profile ?? '?'} いいね${m.likes} 返信${m.replies} RT${m.reposts}：${p.text}`;
-  });
-  const net = dailyNet(g.followers).filter(d => d.date >= since);
-  return { posts, net };
-}
-
-// 先週の仮説と今週の数字から、Claudeが結果・分かったこと・今週の方針を書く。方針は18時の判断と週の文案に渡す
 async function weeklyReview(now = Date.now()) {
-  const st = store.load('state');
-  const prev = (st.reviews || []).slice(-1)[0] || null;
-  const { posts, net } = weekData(now);
-  const prompt = `NORTHEPTIONのX運用の毎週の見直しです。目的は、SF6の人たちにNORTHEPTIONをフォローしてもらうこと（フォロワーの純増）。
+  const prev = (store.load('state').reviews || []).slice(-1)[0] || null;
+  const check = weekCheck(prev, now);
+  const ledger = typeLedger();
+  const prompt = `NORTHEPTIONのX運用の毎週の見直しです。先週の結果を確かめ、次の一手を決め、今週の計画を数字で立ててください。
+目的：SF6の人たちにNORTHEPTIONをフォローしてもらうこと。測る数字は新規フォロー（自分のフォロワー一覧で毎日実測）。最初から最適でなくてよいが、毎週、予想を立てて数字で確かめ、外れたら変える。
 
-## 基準（見直しを始めた時点）
-${BASELINE}
+## 過去1年のデータ（基準）
+${YEAR_TABLE}
 
-## 先週の仮説と方針
-仮説：${prev?.hypothesis || FIRST_HYPOTHESIS}
-方針：${prev?.policy || '（初回）'}
+## 先週の仮説・予想・計画
+仮説：${prev?.hypothesis || 'なし'}
+予想：投稿した日の新規フォロー平均 ${prev?.predictedFollows ?? '—'}人
+計画：在庫から${prev?.planPosts ?? '—'}本${prev?.planTypes?.length ? `（${prev.planTypes.map(t => `${t.type}${t.count}本`).join('・')}）` : ''}
 
-## この1週間のチームの投稿（表示・プロフィールのクリック・反応）
-${posts.join('\n') || '投稿なし'}
+## 先週の結果（コードで集計・判定したもの）
+${check.lines.join('\n')}
 
-## この1週間のフォロワーの増減（日ごと。新規フォローの推定＝増減＋解除の目安1日${BASELINE_UNFOLLOWS_PER_DAY}人）
-${net.map(d => `${d.date} 増減${d.net} 新規フォロー推定${d.estFollows}`).join('\n') || 'まだ記録が2日分ない'}
+## 投稿の種類ごとの成績（記録のある全期間）
+${ledger.join('\n') || 'まだ記録がない'}
 
 ## 書き方
-- result：仮説に対して数字がどうだったかを1〜2文。数字が少なくて判断できないときは、そう書く（無理に結論を出さない）
-- learning：そこから分かったことを1〜2文。分からなければ「まだ分からない」と書く
-- policy：今週の投稿の方針を1〜2文（何を、なぜ）。本数をこなすことを目的にしない。「毎日」「1〜2日に1本」のような決まった間隔を方針にしない（出すかどうかは内容の価値で決める。オーナーは連日の機械的な通知を望んでいない）
-- hypothesis：今週確かめる仮説を1文（先週のままでよければ同じでよい）
-- 上の数字に無いことを事実として書かない`;
-  const r = await require('./claude').callJSON(prompt, REVIEW_SCHEMA, { effort: 'medium' });
-  const entry = { at: new Date(now).toISOString(), ...r };
+- result：予想と結果を数字で1〜2文。判定「${check.verdict}」をそのまま使う
+- learning：分かったことを1〜2文。上の数字に無いことを事実として書かない。分からなければ「まだ分からない」と書く
+- decision：判定に応じた次の一手を1〜2文。当たり→続けるか広げる／外れ→何を変えるか、やめるか／実行不足・測れていない→何が止まったか（届ける文案が無かった・投稿されなかった・数字が取れなかった）と、どう直すか
+- hypothesis：今週確かめる仮説を1文。「どの種類の投稿を何本出すと、投稿した日の新規フォローが基準（1日${BASELINE_FOLLOWS_PER_DAY}人）からどう変わるか」の形にする
+- predicted_follows：今週、投稿した日の新規フォローの平均の予想（人）。基準と上の成績から根拠のある数にする
+- plan_posts：今週、在庫から届ける本数（大会の告知・結果報告は別に自動で出るので含めない。0〜${MAX_PLAN_POSTS}）。本数も仮説の一部として、上の表と成績から決める。出さなければ確かめられず、フォローされる機会も無くなる。本数を減らすなら、その理由を数字で書く
+- plan_types：plan_posts の型ごとの内訳（合計を plan_posts に合わせる）
+- policy：今週の投稿の方針を1〜2文（何を、なぜ）`;
+  const r = await require('./claude').callJSON(prompt, REVIEW_SCHEMA, { effort: 'high' });
+  const planPosts = Math.max(0, Math.min(MAX_PLAN_POSTS, Math.round(r.plan_posts)));
+  const planTypes = r.plan_types.filter(t => t.count > 0);
+  const entry = {
+    at: new Date(now).toISOString(),
+    weekStart: todayJST(now),
+    verdict: check.verdict,
+    result: r.result,
+    learning: r.learning,
+    decision: r.decision,
+    hypothesis: r.hypothesis,
+    predictedFollows: r.predicted_follows,
+    planPosts,
+    planTypes: planTypes.reduce((s, t) => s + t.count, 0) === planPosts ? planTypes : [],
+    policy: r.policy,
+  };
   store.update('state', s => { s.reviews = [...(s.reviews || []), entry].slice(-26); });
   return entry;
 }
 
 function reviewLines(r) {
-  return `**今週の見直し（仮説→結果→次の一手）**\n・結果：${r.result}\n・分かったこと：${r.learning}\n・今週の方針：${r.policy}\n・今週の仮説：${r.hypothesis}`;
+  return `**今週の見直し（予想→結果→次の一手→今週の計画）**
+・判定：${r.verdict}
+・結果：${r.result}
+・分かったこと：${r.learning}
+・次の一手：${r.decision}
+・今週の仮説：${r.hypothesis}
+・今週の計画：在庫から${r.planPosts}本${r.planTypes.length ? `（${r.planTypes.map(t => `${t.type}${t.count}本`).join('・')}）` : ''}。予想は投稿した日の新規フォロー平均${r.predictedFollows}人`;
+}
+
+// 今週の計画（本数・内訳）。見直しが無い・古い形式のときは既定の本数で動かす
+function currentPlan() {
+  const r = (store.load('state').reviews || []).slice(-1)[0];
+  return { posts: r?.planPosts ?? DEFAULT_PLAN_POSTS, types: r?.planTypes || [], weekStart: r?.weekStart || null };
 }
 
 // 18時の判断と週の文案に渡す「今週の方針」
 function currentPolicy() {
   const r = (store.load('state').reviews || []).slice(-1)[0];
-  return r ? `今週の方針：${r.policy}\n今週の仮説：${r.hypothesis}` : `今週の仮説：${FIRST_HYPOTHESIS}`;
+  if (!r) return '';
+  const plan = currentPlan();
+  return `今週の方針：${r.policy}\n今週の仮説：${r.hypothesis}\n今週の計画：在庫から${plan.posts}本${plan.types.length ? `（${plan.types.map(t => `${t.type}${t.count}本`).join('・')}）` : ''}`;
 }
 
-module.exports = { snapshotFollowers, collectPostMetrics, runDaily, dailyNet, funnelLines, slotKey, weeklyReview, reviewLines, currentPolicy };
+module.exports = { snapshotFollowers, collectPostMetrics, trackFollows, runDaily, funnelLines, slotKey, weeklyReview, weekCheck, typeLedger, dayRows, reviewLines, currentPolicy, currentPlan, BASELINE_FOLLOWS_PER_DAY };
