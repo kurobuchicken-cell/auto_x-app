@@ -30,7 +30,7 @@ async function collect(now) {
     items.push({ key: `question:${pq.messageId}`, text: `❓ 選手への質問案が ✅／❌ 待ちです${pq.url ? `：${pq.url}` : ''}` });
   }
 
-  const pendingEvent = () => store.load('drafts').items.filter(d => d.source === 'event' && !d.postedAt && d.date >= addDays(today, -4));
+  const pendingEvent = () => store.load('drafts').items.filter(d => (d.source === 'event' && d.date >= addDays(today, -4) || d.source === 'course' && d.date === today) && !d.postedAt);
   if (pendingEvent().length) {
     // 投稿済みかどうかは runDaily の最初にXで確かめてある（確かめられなければ、未投稿として知らせる）
     for (const d of pendingEvent()) {
@@ -49,6 +49,8 @@ async function collect(now) {
   for (const f of store.load('facts').items.filter(x => x.discoveredAt && x.discoveredAt >= addDays(today, -6))) {
     items.push({ key: `found:${f.no}`, max: 1, text: `📅 大会を見つけて記録しました：#${f.no} ${f.summary}（告知は3日前〜前日に自動で出します。違っていれば「削除 ${f.no}」）` });
   }
+
+  items.push(...require('./course').pendingItems(today));
 
   // 新規フォローが測れないと毎週の判定が止まるので、2日続けて記録が無ければ知らせる
   const follows = store.load('growth').follows || [];
@@ -95,7 +97,7 @@ function eligibleStock(stock, today) {
 function weekProgress(today) {
   const dow = (new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7;
   const monday = addDays(today, -dow);
-  const delivered = store.load('drafts').items.filter(d => d.deliveredAt && !['event', 'result'].includes(d.source) && todayJST(Date.parse(d.deliveredAt)) >= monday).length;
+  const delivered = store.load('drafts').items.filter(d => d.deliveredAt && !['event', 'result', 'course'].includes(d.source) && todayJST(Date.parse(d.deliveredAt)) >= monday).length;
   return { day: dow + 1, monday, delivered };
 }
 

@@ -123,6 +123,8 @@ const DAILY_JOBS = [
   { key: 'growth', hour: 6, run: (ch, now) => growth.runDaily(ch, MANAGER_ID, now) },
   // 毎週の小さな大会の結果（18時の投稿案の判断より前に在庫に入れておく）
   { key: 'cups', hour: 12, run: (ch, now) => require('./services/sns/cups').runDaily(now) },
+  // 講座は水曜20時の投稿。昼に届けて予約投稿してもらう
+  { key: 'course', hour: 12, run: (ch, now) => require('./services/sns/course').runDaily(ch, MANAGER_ID, now) },
 ];
 const runningDaily = new Set();
 

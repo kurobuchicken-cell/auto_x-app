@@ -14,6 +14,7 @@ const DEFAULTS = {
   glossary: { items: [], unresolved: [] },
   growth: { followers: [], posts: {} },
   opponents: { items: {} },
+  course: { items: [] },
 };
 
 function filePath(name) {
