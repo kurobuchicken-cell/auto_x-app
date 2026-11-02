@@ -327,7 +327,8 @@ function recordConfirm(b, raw, now) {
 
 async function notifyConfirms(notify) {
   if (!notify) return;
-  for (const a of (store.load('state').confirmAnswers || []).filter(x => !x.notified)) {
+  // 講座の監修の返事は、文に反映した結果を course.applyAnswers が知らせる
+  for (const a of (store.load('state').confirmAnswers || []).filter(x => !x.notified && !/^講座 第\d+回$/.test(x.topic || ''))) {
     try {
       await notify(`💬 **#${a.channelName} から返事が届きました**（${a.topic || '確認'}）\nQ：${a.question}\nA：${a.raw}`.slice(0, 1900));
       store.update('state', s => { const x = s.confirmAnswers.find(y => y.id === a.id); if (x) x.notified = true; });
@@ -368,4 +369,4 @@ async function mergeAnswer(prev, b, raw, judged, now) {
   }
 }
 
-module.exports = { propose, revise, approve, cancel, ask, onPlayerMessage, flushAnswers, activeQuestionFor, findChannel, CHANNELS };
+module.exports = { propose, revise, approve, cancel, ask, onPlayerMessage, flushAnswers, activeQuestionFor, findChannel, mentionOf, playersOf, CHANNELS };

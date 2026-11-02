@@ -125,6 +125,8 @@ const DAILY_JOBS = [
   { key: 'cups', hour: 12, run: (ch, now) => require('./services/sns/cups').runDaily(now) },
   // 講座は水曜20時の投稿。昼に届けて予約投稿してもらう
   { key: 'course', hour: 12, run: (ch, now) => require('./services/sns/course').runDaily(ch, MANAGER_ID, now) },
+  // 講座の監修：2週間前に文案、1週間前（前の回を出した水曜の夜）に#onikiへ1回分を送る
+  { key: 'courseReview', hour: 21, run: (ch, now) => require('./services/sns/course').runSupervision(client, ch, now) },
 ];
 const runningDaily = new Set();
 
@@ -166,6 +168,7 @@ setInterval(async () => {
   await runDailyJobs().catch(err => console.error('毎日の処理エラー:', err));
   await growth.snapshotFollowers().catch(err => console.error('フォロワー数の記録エラー:', err.message));
   await questions.flushAnswers(Date.now(), async text => (await botChannel()).send(`<@${MANAGER_ID}> ${text}`)).catch(err => console.error('選手の回答のまとめエラー:', err));
+  await require('./services/sns/course').applyAnswers(async text => (await botChannel()).send(`<@${MANAGER_ID}> ${text}`)).catch(err => console.error('講座の監修の反映エラー:', err));
 
   // 9時以降に1日1回メールチェック（再起動で9時台を逃しても当日中に実行される）
   if (h >= 9 && lastMailCheckDate !== today) {
