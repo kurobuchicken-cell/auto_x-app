@@ -34,7 +34,12 @@ async function collect(now) {
   if (pendingEvent().length) {
     // 投稿済みかどうかは runDaily の最初にXで確かめてある（確かめられなければ、未投稿として知らせる）
     for (const d of pendingEvent()) {
-      items.push({ key: `event:${d.id}`, text: `📣 「${d.topic}」がまだXに投稿されていません${d.url ? `：${d.url}` : ''}` });
+      // Botが投稿するものは、✅が済んでいれば時刻に出るので知らせない（失敗はその場で知らせている）
+      if (d.xpost?.approvedAt && !d.xpost.failedAt) continue;
+      const text = d.xpost && !d.xpost.cancelledAt && !d.xpost.approvedAt
+        ? `📣 「${d.topic}」が ✅ 待ちです（✅でBotが投稿します）${d.url ? `：${d.url}` : ''}`
+        : `📣 「${d.topic}」がまだXに投稿されていません${d.url ? `：${d.url}` : ''}`;
+      items.push({ key: `event:${d.id}`, text });
     }
   }
 
@@ -83,11 +88,10 @@ function recentlyDelivered(today) {
     .sort((a, b) => b.deliveredAt.localeCompare(a.deliveredAt));
 }
 
-const hasUnchecked = d => (d.queuedPatterns || []).some(p => /【要確認/.test(p.text));
 
 // 届けてよい在庫。同じ型が続かないものを優先し、それしか無ければ同じ型でも出す（計画の本数を守るため）
 function eligibleStock(stock, today) {
-  const ok = stock.filter(d => !hasUnchecked(d));
+  const ok = stock.filter(d => !drafts.hasUnchecked(d));
   const recentTypes = new Set(recentlyDelivered(today).filter(d => todayJST(Date.parse(d.deliveredAt)) >= addDays(today, -SAME_TYPE_GAP_DAYS)).map(d => d.type).filter(Boolean));
   const fresh = ok.filter(d => !recentTypes.has(d.type));
   return fresh.length ? fresh : ok;
@@ -199,7 +203,8 @@ async function runDaily(channel, managerId, now = Date.now()) {
   if (!pick && !items.length) return { delivered: null, reminded: 0 };
 
   const lines = [];
-  if (pick) lines.push(`📝 **今日の投稿案です**（今夜19時ごろの投稿がおすすめです）\n🗓️ 今日これを出す理由：${reason}`);
+  const byBot = pick && pick.queuedPatterns?.length === 1 && require('./xpost').botPostable(pick.queuedPatterns[0]);
+  if (pick) lines.push(`📝 **今日の投稿案です**（${byBot ? 'ツリー・アンケート・リプライを使うのでBotが投稿します。✅で今夜19時に投稿（過ぎていればすぐ）／文案への返信で直す指示／❌で取りやめ' : '今夜19時ごろの投稿がおすすめです'}）\n🗓️ 今日これを出す理由：${reason}`);
   if (items.length) lines.push(`${pick ? '\n' : ''}**対応待ち**\n${items.map(i => `・${i.text}`).join('\n')}`);
   await channel.send(`🔔 <@${managerId}> ${lines.join('\n')}`);
   bumpCounts(items.map(i => i.key));

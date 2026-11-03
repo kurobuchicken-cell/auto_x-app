@@ -268,18 +268,22 @@ async function applyAnswers(notify, now = Date.now()) {
 
 // ── 当日の配信 ─────────────────────────────────────
 
-// 投稿日の昼（12時のジョブ）に、その日の回をツリーの投稿ごとにコピーできる形で届ける
+// 投稿日の昼（12時のジョブ）に、その日の回を届ける。ツリーなのでオーナーの✅でBotが20時に投稿する（2026-11-03オーナー決定）
 async function runDaily(channel, managerId, now = Date.now()) {
   const today = todayJST(now);
   const due = items().find(c => c.date === today && c.ready && !c.deliveredAt);
   if (!due) return null;
-  await channel.send(`🔔 <@${managerId}> 📚 **今夜${POST_TIME}の講座の投稿です**（${due.title}）\n${due.tweets.length}本のツリーです。1投稿目に続けて、2投稿目以降をツリーにつなげて予約投稿してください。`);
+  const head = await channel.send(`🔔 <@${managerId}> 📚 **今夜${POST_TIME}の講座の投稿です**（${due.title}）\n${due.tweets.length}本のツリーです。✅でBotが${POST_TIME}にツリーで投稿します（過ぎていればすぐ）／このメッセージへの返信で直す指示／❌で取りやめ`);
   const patterns = due.tweets.map((text, i) => ({ label: `${i + 1}投稿目${i ? '（ツリー）' : ''}`, text, note: '' }));
   const msg = await drafts.sendPatterns(channel, '', patterns);
-  // 1投稿目でXの投稿と照らし合わせ、種類「講座」として新規フォローの記録に載せる
+  // 種類「講座」として新規フォローの記録に載せる
   store.update('drafts', d => {
-    d.items.push({ id: `course-${due.no}`, date: today, type: '講座', topic: due.title, source: 'course', factNos: [], url: msg?.url ?? null, patterns: [due.tweets[0]], deliveredAt: new Date(now).toISOString() });
+    d.items.push({ id: `course-${due.no}`, date: today, type: '講座', topic: due.title, source: 'course', factNos: [], url: msg?.url ?? head.url, patterns: [due.tweets[0]], deliveredAt: new Date(now).toISOString() });
   });
+  const xpost = require('./xpost');
+  xpost.register(`course-${due.no}`, { text: due.tweets[0], thread: due.tweets.slice(1) }, head.id, { slot: POST_TIME });
+  await head.react('✅').catch(() => {});
+  await head.react('❌').catch(() => {});
   setItem(due.no, { deliveredAt: new Date(now).toISOString() });
   console.log(`📚 講座を届けた：${due.title}`);
   return due;

@@ -14,6 +14,7 @@ const reminders = require('./services/sns/reminders');
 const news = require('./services/sns/news');
 const glossary = require('./services/sns/glossary');
 const growth = require('./services/sns/growth');
+const xpost = require('./services/sns/xpost');
 
 const client = new Client({
   intents: [
@@ -169,6 +170,7 @@ setInterval(async () => {
   await growth.snapshotFollowers().catch(err => console.error('フォロワー数の記録エラー:', err.message));
   await questions.flushAnswers(Date.now(), async text => (await botChannel()).send(`<@${MANAGER_ID}> ${text}`)).catch(err => console.error('選手の回答のまとめエラー:', err));
   await require('./services/sns/course').applyAnswers(async text => (await botChannel()).send(`<@${MANAGER_ID}> ${text}`)).catch(err => console.error('講座の監修の反映エラー:', err));
+  await xpost.runDue(async text => (await botChannel()).send(`<@${MANAGER_ID}> ${text}`)).catch(err => console.error('Xへの投稿エラー:', err));
 
   // 9時以降に1日1回メールチェック（再起動で9時台を逃しても当日中に実行される）
   if (h >= 9 && lastMailCheckDate !== today) {
@@ -367,6 +369,12 @@ client.on('messageCreate', async (message) => {
       await questions.revise(message.channel, MANAGER_ID, text);
       return;
     }
+    const toPost = message.reference?.messageId && xpost.findByApproval(message.reference.messageId);
+    if (toPost && !(toPost.xpost.ids || []).length) {
+      await message.react('✏️');
+      await xpost.revise(message.channel, toPost, text);
+      return;
+    }
     if (message.reference?.messageId && await require('./services/sns/course').onOwnerReply(message.channel, message.reference.messageId, text).then(ok => { if (ok) message.react('✏️'); return ok; })) return;
     if (await handleCommand(message, text)) return;
     await handleFreeText(message, text);
@@ -379,6 +387,25 @@ client.on('messageCreate', async (message) => {
 client.on('messageReactionAdd', async (reaction, user) => {
   if (user.bot) return;
   if (user.id !== MANAGER_ID) return;
+
+  try {
+    const item = xpost.findByApproval(reaction.message.id);
+    if (item) {
+      const ch = await botChannel();
+      if (reaction.emoji.name === '✅') {
+        const x = xpost.approve(item.id).xpost;
+        await ch.send(x.postAt && Date.parse(x.postAt) > Date.now() + 60 * 1000
+          ? `🐦 「${item.topic}」を${new Date(Date.parse(x.postAt) + 9 * 3600 * 1000).toISOString().slice(11, 16)}にXへ投稿します。`
+          : `🐦 「${item.topic}」をXへ投稿します。`);
+      } else if (reaction.emoji.name === '❌') {
+        xpost.cancel(item.id);
+        await ch.send(`🗑️ 「${item.topic}」の投稿を取りやめました。`);
+      }
+      return;
+    }
+  } catch (err) {
+    console.error('Xへの投稿のリアクション処理エラー:', err);
+  }
 
   try {
     if (await require('./services/sns/course').onOwnerReaction(client, await botChannel(), reaction.message.id, reaction.emoji.name)) return;

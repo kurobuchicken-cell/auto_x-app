@@ -60,4 +60,14 @@ async function xUserGet(pathAndQuery) {
   return res.json();
 }
 
-module.exports = { accessToken, xUserGet, tokenFields, save, load, TOKEN_FILE };
+async function xUserPost(pathAndQuery, body) {
+  const res = await fetch(`https://api.x.com/2${pathAndQuery}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${await accessToken()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`X API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return res.json();
+}
+
+module.exports = { accessToken, xUserGet, xUserPost, tokenFields, save, load, TOKEN_FILE };
