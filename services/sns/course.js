@@ -193,9 +193,13 @@ async function runSupervision(client, botChannel, now = Date.now()) {
 // オニキに送る前に、オーナーに文案を届けて✅を待つ。リアクションはこの1通目に付けてもらう
 async function askOwner(botChannel, c, now = Date.now()) {
   const managerId = process.env.DISCORD_MANAGER_ID;
-  const head = await botChannel.send(`🔔 ${managerId ? `<@${managerId}> ` : ''}📚 **講座 第${c.no}回（${c.date.slice(5).replace('-', '/')}(水)${POST_TIME}投稿）の文案です**
-✅で#onikiへ監修の確認を送ります／このメッセージへの返信で直す指示／❌で作り直し`);
-  const body = await drafts.sendPatterns(botChannel, '', c.tweets.map((text, i) => ({ label: `${i + 1}投稿目`, text, note: '' })));
+  // オニキに届く文そのものを見せる（選手に送る文はオーナーが確かめてから送る）
+  const outgoing = require('./questions').outgoingMessages({ channel: 'oniki', topic: TOPIC(c.no), text: confirmText(c) }, 'confirm', { preview: true });
+  const head = await botChannel.send(`🔔 ${managerId ? `<@${managerId}> ` : ''}📚 **講座 第${c.no}回（${c.date.slice(5).replace('-', '/')}(水)${POST_TIME}投稿）の監修を、#onikiに次の文で頼みます**（下の${outgoing.length}通が、そのまま#onikiに届きます）
+✅で送る／このメッセージへの返信で直す指示／❌で作り直し`);
+  const sentIds = [];
+  for (const m of outgoing) sentIds.push((await botChannel.send(m)).id);
+  const body = { sentIds };
   await head.react('✅').catch(() => {});
   await head.react('❌').catch(() => {});
   setItem(c.no, { ownerMsgId: head.id, ownerMsgIds: [head.id, ...(body?.sentIds || [])], ownerMsgUrl: head.url, ownerAskedAt: new Date(now).toISOString() });

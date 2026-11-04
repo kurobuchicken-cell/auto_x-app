@@ -128,6 +128,23 @@ async function approve(client, botChannel) {
 }
 
 // purpose: 'post'＝X投稿の材料にする質問、'confirm'＝講座の監修など投稿の材料にしない確認（返事はオーナーに知らせるだけ）
+// 選手のチャンネルに届く文そのもの。Discordの1通は2000文字までなので、段落の切れ目で分ける。
+// preview はオーナーに見せる用で、メンションの代わりに名前で書く（sns-botで選手に通知を飛ばさない）
+function outgoingMessages(q, purpose = 'post', { preview = false } = {}) {
+  const head = purpose === 'confirm' ? `📝 **${q.topic || '確認'}の件で教えてください**` : '📝 **X投稿用の質問です**（1〜2行の返信で十分です）';
+  // 1人のチャンネルも、メンションしないと選手が気付かないため必ずメンションする
+  const names = q.target ? [q.target] : playersOf(q.channel);
+  const mention = preview ? names.map(n => `@${n} `).join('') : names.map(mentionOf).join('');
+  const out = [];
+  let cur = '';
+  for (const para of `${mention}${head}\n\n${q.text}`.split('\n\n')) {
+    if (cur && cur.length + para.length + 2 > 1900) { out.push(cur); cur = ''; }
+    cur = cur ? `${cur}\n\n${para}` : para;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
 async function sendAll(client, botChannel, list, purpose = 'post') {
   const ok = [];
   const ng = [];
@@ -135,10 +152,9 @@ async function sendAll(client, botChannel, list, purpose = 'post') {
     const ch = findChannel(client, q.channel);
     if (!ch) { ng.push(`#${q.channel}（チャンネルが見つからない／Botが入っていない）`); continue; }
     try {
-      const head = purpose === 'confirm' ? `📝 **${q.topic || '確認'}の件で教えてください**` : '📝 **X投稿用の質問です**（1〜2行の返信で十分です）';
-      // 1人のチャンネルも、メンションしないと選手が気付かないため必ずメンションする
-      const mention = (q.target ? [q.target] : playersOf(q.channel)).map(mentionOf).join('');
-      const sentMsg = await ch.send(`${mention}${head}\n\n${q.text}`);
+      const [first, ...rest] = outgoingMessages(q, purpose);
+      const sentMsg = await ch.send(first);
+      for (const m of rest) await ch.send(m);
       store.update('state', s => {
         s.sentQuestions.push({ channelId: ch.id, messageId: sentMsg.id, channelName: q.channel, target: q.target || null, question: q.text, purpose, topic: q.topic || null, sentAt: new Date().toISOString() });
       });
@@ -369,4 +385,4 @@ async function mergeAnswer(prev, b, raw, judged, now) {
   }
 }
 
-module.exports = { propose, revise, approve, cancel, ask, onPlayerMessage, flushAnswers, activeQuestionFor, findChannel, mentionOf, playersOf, CHANNELS };
+module.exports = { outgoingMessages, propose, revise, approve, cancel, ask, onPlayerMessage, flushAnswers, activeQuestionFor, findChannel, mentionOf, playersOf, CHANNELS };
