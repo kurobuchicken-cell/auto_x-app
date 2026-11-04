@@ -278,7 +278,7 @@ async function handleFreeText(message, text) {
   const intent = await classifyOwnerText(text);
   if (intent.kind === 'instruction') {
     store.update('state', s => { s.ownerInstructions = [...(s.ownerInstructions || []), { at: new Date().toISOString(), text, summary: intent.summary }].slice(-30); });
-    await message.reply(`📌 指示として受け取りました：${intent.summary}\n（文案は作りません。投稿のタイミングの判断に使います。仕組みそのものの変更が必要なものは、次の作業で反映します）`);
+    await message.reply(`📌 指示として受け取りました：${intent.summary}\n（文案は作りません。記録して、18時に何を届けるかの判断に使います。プログラムの変更が要ることは、Botでは反映できないので Claude Code で伝えてください。文案を直すときは、その文案に「返信」で書いてください）`);
     return;
   }
   if (intent.kind === 'other') return;
