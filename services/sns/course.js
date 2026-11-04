@@ -195,13 +195,14 @@ async function askOwner(botChannel, c, now = Date.now()) {
   const managerId = process.env.DISCORD_MANAGER_ID;
   const head = await botChannel.send(`🔔 ${managerId ? `<@${managerId}> ` : ''}📚 **講座 第${c.no}回（${c.date.slice(5).replace('-', '/')}(水)${POST_TIME}投稿）の文案です**
 ✅で#onikiへ監修の確認を送ります／このメッセージへの返信で直す指示／❌で作り直し`);
-  await drafts.sendPatterns(botChannel, '', c.tweets.map((text, i) => ({ label: `${i + 1}投稿目`, text, note: '' })));
+  const body = await drafts.sendPatterns(botChannel, '', c.tweets.map((text, i) => ({ label: `${i + 1}投稿目`, text, note: '' })));
   await head.react('✅').catch(() => {});
   await head.react('❌').catch(() => {});
-  setItem(c.no, { ownerMsgId: head.id, ownerMsgUrl: head.url, ownerAskedAt: new Date(now).toISOString() });
+  setItem(c.no, { ownerMsgId: head.id, ownerMsgIds: [head.id, ...(body?.sentIds || [])], ownerMsgUrl: head.url, ownerAskedAt: new Date(now).toISOString() });
 }
 
-const byOwnerMsg = id => items().find(c => c.ownerMsgId && c.ownerMsgId === id && !c.sentAt);
+// 返信・リアクションは見出しでも各投稿でも受ける
+const byOwnerMsg = id => items().find(c => c.ownerMsgId && (c.ownerMsgId === id || (c.ownerMsgIds || []).includes(id)) && !c.sentAt);
 
 // オーナーの✅：#onikiへ送る。❌：次の21時に作り直す
 async function onOwnerReaction(client, botChannel, messageId, emoji, now = Date.now()) {
@@ -213,7 +214,7 @@ async function onOwnerReaction(client, botChannel, messageId, emoji, now = Date.
     const q = store.load('state').sentQuestions.filter(x => x.topic === TOPIC(c.no)).pop();
     if (q) setItem(c.no, { sentAt: q.sentAt, questionId: q.messageId, ownerApprovedAt: new Date(now).toISOString() });
   } else if (emoji === '❌') {
-    setItem(c.no, { tweets: null, ownerMsgId: null, ownerAskedAt: null });
+    setItem(c.no, { tweets: null, ownerMsgId: null, ownerMsgIds: [], ownerAskedAt: null });
     await botChannel.send(`📚 講座 第${c.no}回の文案を作り直します（今夜21時）。`);
   }
   return true;
@@ -237,7 +238,7 @@ ${JSON.stringify(c.tweets)}
 
 ## オーナーの指示
 ${instruction}`, REVISE_SCHEMA, { effort: 'medium' });
-  setItem(c.no, { tweets: withRules(r.tweets), ownerMsgId: null });
+  setItem(c.no, { tweets: withRules(r.tweets), ownerMsgId: null, ownerMsgIds: [] });
   await askOwner(botChannel, { ...c, tweets: withRules(r.tweets) }, now);
   return true;
 }
@@ -281,7 +282,7 @@ async function runDaily(channel, managerId, now = Date.now()) {
     d.items.push({ id: `course-${due.no}`, date: today, type: '講座', topic: due.title, source: 'course', factNos: [], url: msg?.url ?? head.url, patterns: [due.tweets[0]], deliveredAt: new Date(now).toISOString() });
   });
   const xpost = require('./xpost');
-  xpost.register(`course-${due.no}`, { text: due.tweets[0], thread: due.tweets.slice(1) }, head.id, { slot: POST_TIME });
+  xpost.register(`course-${due.no}`, { text: due.tweets[0], thread: due.tweets.slice(1) }, head.id, { slot: POST_TIME, alsoIds: msg?.sentIds || [] });
   await head.react('✅').catch(() => {});
   await head.react('❌').catch(() => {});
   setItem(due.no, { deliveredAt: new Date(now).toISOString() });

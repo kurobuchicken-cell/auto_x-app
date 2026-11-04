@@ -369,10 +369,11 @@ client.on('messageCreate', async (message) => {
       await questions.revise(message.channel, MANAGER_ID, text);
       return;
     }
-    const toPost = message.reference?.messageId && xpost.findByApproval(message.reference.messageId);
-    if (toPost && !(toPost.xpost.ids || []).length) {
+    // Botが届けた文案（見出し・各投稿・案内のどれでも）への返信は、直す指示としてすぐ直して返す
+    const toRevise = message.reference?.messageId && xpost.findByMessage(message.reference.messageId);
+    if (toRevise) {
       await message.react('✏️');
-      await xpost.revise(message.channel, toPost, text);
+      await xpost.revise(message.channel, toRevise, text, message.reference.messageId);
       return;
     }
     if (message.reference?.messageId && await require('./services/sns/course').onOwnerReply(message.channel, message.reference.messageId, text).then(ok => { if (ok) message.react('✏️'); return ok; })) return;
@@ -401,6 +402,12 @@ client.on('messageReactionAdd', async (reaction, user) => {
         xpost.cancel(item.id);
         await ch.send(`🗑️ 「${item.topic}」の投稿を取りやめました。`);
       }
+      return;
+    }
+    const revised = xpost.findByRevision(reaction.message.id);
+    if (revised && reaction.emoji.name === '✅') {
+      xpost.confirmRevision(revised.id);
+      await (await botChannel()).send(`✅ 「${revised.topic}」の直した文案を確定版にしました。コピーして投稿してください。`);
       return;
     }
   } catch (err) {

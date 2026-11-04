@@ -220,9 +220,9 @@ ${closings.map(c => `・${oneLine(c)}`).join('\n')}` : ''}`;
   throw new Error(`${count}パターンの生成に失敗しました`);
 }
 
-function logDrafts({ type, topic, patterns, source, factNos = [], url = null }) {
+function logDrafts({ type, topic, patterns, source, factNos = [], url = null, msg = null }) {
   return store.update('drafts', d => {
-    const item = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, date: todayJST(), type, topic, source, factNos, url, patterns: patterns.map(p => p.text) };
+    const item = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, date: todayJST(), type, topic, source, factNos, url, patterns: patterns.map(p => p.text), msgIds: msg?.sentIds || [], patternMsgIds: msg?.patternIds || [] };
     d.items.push(item);
     return item;
   });
@@ -237,21 +237,28 @@ async function sendPatterns(channel, header, patterns) {
     ...(p.followUp ? [`\n↩️ ${p.poll?.length ? 'アンケートの締め切り（1日後）に' : '投稿の直後に'}リプライで出す文\n\`\`\`\n${p.followUp}\n\`\`\``] : []),
   ].join('');
   const block = p => `\`\`\`\n${p.text}\n\`\`\`${extras(p)}${p.note ? `\n📝 ${p.note}` : ''}${p.reason ? `\n💡 この案にした理由：${p.reason}` : ''}`;
+  // オーナーはどのメッセージに返信・✅するか分からないので、届けた全部のIDを返す（2026-11-04、本文への返信が拾われなかった）
   if (patterns.length === 1) {
-    return channel.send(`${header ? `${header}\n` : ''}${block(patterns[0])}`);
+    const m = await channel.send(`${header ? `${header}\n` : ''}${block(patterns[0])}`);
+    if (m) Object.assign(m, { sentIds: [m.id], patternIds: [m.id] });
+    return m;
   }
   const first = header ? await channel.send(header) : null;
   let msg = null;
+  const patternIds = [];
   for (const p of patterns) {
     msg = await channel.send(`**【${p.label}】**\n${block(p)}`);
+    patternIds.push(msg?.id);
   }
-  return first || msg;
+  const ret = first || msg;
+  if (ret) Object.assign(ret, { sentIds: [first?.id, ...patternIds].filter(Boolean), patternIds });
+  return ret;
 }
 
 async function draftAndSend(channel, material, { type = null, header = '', extra = '', source = 'manual', topic = null, count = 1, factNos = [], format = null } = {}) {
   const patterns = await generatePatterns(material, { type, extra, count, format });
   const msg = await sendPatterns(channel, header, patterns);
-  const item = logDrafts({ type, topic: topic || material.slice(0, 80), patterns, source, factNos, url: msg?.url ?? null });
+  const item = logDrafts({ type, topic: topic || material.slice(0, 80), patterns, source, factNos, url: msg?.url ?? null, msg });
   if (count === 1) await offerBotPost(msg, item.id, patterns[0]);
   return patterns;
 }
@@ -260,8 +267,8 @@ async function draftAndSend(channel, material, { type = null, header = '', extra
 async function offerBotPost(msg, id, pattern, { announce = true } = {}) {
   const xpost = require('./xpost');
   if (!msg || !xpost.botPostable(pattern)) return;
-  xpost.register(id, pattern, msg.id);
-  if (announce) await msg.reply(`🐦 これはBotが投稿します。✅で今夜${xpost.SLOT}に投稿（過ぎていればすぐ）／この文案への返信で直す指示／❌で取りやめ`).catch(() => {});
+  const note = announce ? await msg.reply(`🐦 これはBotが投稿します。✅で今夜${xpost.SLOT}に投稿（過ぎていればすぐ）／この文案への返信で直す指示／❌で取りやめ`).catch(() => null) : null;
+  xpost.register(id, pattern, msg.id, { alsoIds: [...(msg.sentIds || []), note?.id].filter(Boolean) });
   await msg.react('✅').catch(() => {});
   await msg.react('❌').catch(() => {});
 }
@@ -358,7 +365,7 @@ async function deliver(channel, item) {
   const msg = await sendPatterns(channel, item.header, patterns);
   store.update('drafts', d => {
     const x = d.items.find(y => y.id === item.id);
-    if (x) Object.assign(x, { deliveredAt: new Date().toISOString(), url: msg?.url ?? null });
+    if (x) Object.assign(x, { deliveredAt: new Date().toISOString(), url: msg?.url ?? null, msgIds: msg?.sentIds || [], patternMsgIds: msg?.patternIds || [] });
   });
   if (patterns.length === 1) await offerBotPost(msg, item.id, patterns[0], { announce: false });
 }

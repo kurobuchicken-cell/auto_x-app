@@ -19,7 +19,19 @@ function postAtFor(slot, now) {
 }
 
 function findByApproval(messageId) {
-  return store.load('drafts').items.find(d => d.xpost && d.xpost.approvalMsgId === messageId);
+  return store.load('drafts').items.find(d => d.xpost && (d.xpost.approvalMsgId === messageId || (d.xpost.approvalMsgIds || []).includes(messageId)));
+}
+
+// 返信先がBotの届けた文案のどれか（見出し・各投稿・案内・直した文案）。古い記録は url の末尾のIDで見る
+function findByMessage(messageId) {
+  return store.load('drafts').items.find(d => (d.msgIds || []).includes(messageId)
+    || d.xpost?.approvalMsgId === messageId || (d.xpost?.approvalMsgIds || []).includes(messageId)
+    || (d.url || '').endsWith(`/${messageId}`));
+}
+
+// コピペで出す文案を直したときの✅待ち
+function findByRevision(messageId) {
+  return store.load('drafts').items.find(d => d.revised && d.revised.msgId === messageId && !d.revised.confirmedAt);
 }
 
 function patch(id, fn) {
@@ -31,17 +43,22 @@ function patch(id, fn) {
 }
 
 // 届けた文案を、✅でBotが投稿する枠に載せる
-function register(id, pattern, messageId, { slot = SLOT } = {}) {
+function register(id, pattern, messageId, { slot = SLOT, alsoIds = [] } = {}) {
   patch(id, item => {
-    item.xpost = { tweets: tweetsOf(pattern), poll: pattern.poll || [], followUp: pattern.followUp || '', slot, approvalMsgId: messageId };
+    item.xpost = { tweets: tweetsOf(pattern), poll: pattern.poll || [], followUp: pattern.followUp || '', slot, approvalMsgId: messageId, approvalMsgIds: [...new Set([messageId, ...alsoIds])] };
+    item.msgIds = [...new Set([...(item.msgIds || []), messageId, ...alsoIds])];
   });
 }
 
 function approve(id, now = Date.now()) {
-  return patch(id, item => {
-    if (item.xpost.approvedAt && !item.xpost.cancelledAt) return;
-    Object.assign(item.xpost, { approvedAt: new Date(now).toISOString(), cancelledAt: null, postAt: postAtFor(item.xpost.slot, now) });
+  const item = patch(id, it => {
+    if (it.xpost.approvedAt && !it.xpost.cancelledAt) return;
+    Object.assign(it.xpost, { approvedAt: new Date(now).toISOString(), cancelledAt: null, postAt: postAtFor(it.xpost.slot, now) });
   });
+  // 講座は確定版を講座の記録にも残す（次の回の文案づくりのお手本になるため）
+  const m = /^course-(\d+)$/.exec(id);
+  if (m) store.update('course', d => { const c = d.items.find(x => x.no === Number(m[1])); if (c) c.tweets = [...item.xpost.tweets]; });
+  return item;
 }
 
 function cancel(id, now = Date.now()) {
@@ -127,14 +144,32 @@ const REVISE_SCHEMA = {
   additionalProperties: false,
 };
 
-// オーナーの返信：指示どおりに直して、もう一度✅を待つ（前の✅は使えなくする）
-async function revise(channel, item, instruction) {
-  const drafts = require('./drafts');
+// 直す元：Botが投稿するものはその枠の文、直したことがあればその文、無ければ返信先の案（複数案なら返信したメッセージの案）
+function basePattern(item, repliedId) {
   const x = item.xpost;
+  if (x && x.approvalMsgId) return { text: x.tweets[0], thread: x.tweets.slice(1), poll: x.poll, followUp: x.followUp };
+  if (item.revised) return item.revised.pattern;
+  const idx = Math.max(0, (item.patternMsgIds || []).indexOf(repliedId));
+  const q = (item.queuedPatterns || [])[idx];
+  if (q) return { text: q.text, thread: q.thread || [], poll: q.poll || [], followUp: q.followUp || '' };
+  if (x) return { text: x.tweets[0], thread: x.tweets.slice(1), poll: x.poll, followUp: x.followUp };
+  return { text: item.patterns[idx] || item.patterns[0], thread: [], poll: [], followUp: '' };
+}
+
+// オーナーの返信：指示どおりに直して、すぐ返し、もう一度✅を待つ（前の✅は使えなくする）。
+// ✅で、Botが投稿するものは時刻に投稿、コピペで出すものは確定版として記録する（2026-11-04オーナー指示）
+async function revise(channel, item, instruction, repliedId = null) {
+  const drafts = require('./drafts');
+  if ((item.xpost?.ids || []).length || item.postedAt) {
+    await channel.send(`「${item.topic}」はもう投稿済みのため、直せません。`);
+    return;
+  }
+  const base = basePattern(item, repliedId);
+  const slot = item.xpost?.slot || SLOT;
   const r = await require('./claude').callJSON(`Xに出す投稿を、オーナーの指示どおりに直してください。指示に無いところは変えない。1文ごとに改行し、1行は全角22文字ほどまで。ハッシュタグは1投稿目だけ。
 
 ## 今の投稿
-${JSON.stringify({ text: x.tweets[0], thread: x.tweets.slice(1), poll: x.poll, follow_up: x.followUp })}
+${JSON.stringify({ text: base.text, thread: base.thread || [], poll: base.poll || [], follow_up: base.followUp || '' })}
 （text＝1投稿目、thread＝ツリーの2投稿目以降、poll＝アンケートの選択肢（2〜4個、1つ25文字まで。無ければ空）、follow_up＝アンケートの締め切り後に出すリプライ（無ければ空））
 
 ## オーナーの指示
@@ -143,13 +178,34 @@ ${instruction}`, REVISE_SCHEMA, { effort: 'medium' });
   const bad = drafts.pollProblems(p.poll);
   const long = [p.text, ...p.thread, p.followUp].flatMap(drafts.longLines);
   const note = [bad.length ? `⚠️ アンケートの選択肢が使えません（${bad.join('、')}）。もう一度、返信で直す指示をください` : '', long.length ? `⚠️ 1行が長い行があります（${long.map(l => `「${l}」`).join('、')}）` : ''].filter(Boolean).join('\n');
-  const msg = await drafts.sendPatterns(channel, `✏️ 直しました（「${item.topic}」）`, [{ label: '直した文案', ...p, note, reason: '' }]);
-  patch(item.id, it => { it.xpost.approvalMsgId = null; });
-  if (!msg) return;
-  if (bad.length) return;
-  register(item.id, p, msg.id, { slot: x.slot });
+  const byBot = !bad.length && botPostable(p);
+  const how = bad.length ? '' : byBot
+    ? `\n✅でBotが${slot}に投稿します（過ぎていればすぐ）／この文案への返信でさらに直す／❌で取りやめ`
+    : '\n✅でこれを確定版にします（コピーして投稿してください）／この文案への返信でさらに直す';
+  const msg = await drafts.sendPatterns(channel, `✏️ 直しました（「${item.topic}」）${how}`, [{ label: '直した文案', ...p, note, reason: '' }]);
+  patch(item.id, it => {
+    if (it.xpost) Object.assign(it.xpost, { approvalMsgId: null, approvalMsgIds: [] });
+    it.revised = null;
+    if (msg) it.msgIds = [...new Set([...(it.msgIds || []), msg.id])];
+  });
+  if (!msg || bad.length) return;
+  if (byBot) {
+    register(item.id, p, msg.id, { slot });
+    await msg.react('✅').catch(() => {});
+    await msg.react('❌').catch(() => {});
+    return;
+  }
+  patch(item.id, it => { it.revised = { pattern: p, msgId: msg.id, at: new Date().toISOString() }; });
   await msg.react('✅').catch(() => {});
-  await msg.react('❌').catch(() => {});
 }
 
-module.exports = { revise, botPostable, tweetsOf, partsOf, register, approve, cancel, findByApproval, runDue, postAtFor, POLL_MINUTES, SLOT };
+// コピペで出す文案の確定版：記録の文を直した文に置き換える（投稿の照合と成績の集計がこの文を見るため）
+function confirmRevision(id, now = Date.now()) {
+  return patch(id, it => {
+    it.revised.confirmedAt = new Date(now).toISOString();
+    it.patterns = [it.revised.pattern.text];
+    if (it.queuedPatterns) it.queuedPatterns = [{ ...(it.queuedPatterns[0] || {}), ...it.revised.pattern }];
+  });
+}
+
+module.exports = { revise, confirmRevision, botPostable, tweetsOf, partsOf, register, approve, cancel, findByApproval, findByMessage, findByRevision, runDue, postAtFor, POLL_MINUTES, SLOT };
