@@ -169,7 +169,7 @@ setInterval(async () => {
   await runDailyJobs().catch(err => console.error('毎日の処理エラー:', err));
   await growth.snapshotFollowers().catch(err => console.error('フォロワー数の記録エラー:', err.message));
   await questions.flushAnswers(Date.now(), async text => (await botChannel()).send(`<@${MANAGER_ID}> ${text}`)).catch(err => console.error('選手の回答のまとめエラー:', err));
-  await require('./services/sns/course').applyAnswers(async text => (await botChannel()).send(`<@${MANAGER_ID}> ${text}`)).catch(err => console.error('講座の監修の反映エラー:', err));
+  await require('./services/sns/course').applyAnswers(async text => (await botChannel()).send(`<@${MANAGER_ID}> ${text}`), Date.now(), botChannel).catch(err => console.error('講座の監修の反映エラー:', err));
   await xpost.runDue(async text => (await botChannel()).send(`<@${MANAGER_ID}> ${text}`)).catch(err => console.error('Xへの投稿エラー:', err));
 
   // 9時以降に1日1回メールチェック（再起動で9時台を逃しても当日中に実行される）

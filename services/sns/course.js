@@ -127,8 +127,13 @@ ${prev.map(p => `--- ${p.title}\n${p.tweets.join('\n\n（ツリー）\n')}`).joi
 // ── 監修（1週間前に送り、返事で直す） ─────────────────────
 
 function confirmText(c) {
-  return `講座 第${c.no}回（${c.date.slice(5).replace('-', '/')}(水)${POST_TIME}に投稿）の確認をお願いします。
-直してほしいところと、チャレンジの回数だけ返信してもらえればOKです（直しが無ければ「OK」と回数だけで大丈夫です）。
+  const when = `${c.date.slice(5).replace('-', '/')}(水)${POST_TIME}に投稿`;
+  const head = c.reconfirm
+    ? `講座 第${c.no}回（${when}）を、いただいた返事で直しました。
+この形で投稿してよければ「OK」、まだ直すところがあれば返信してください。`
+    : `講座 第${c.no}回（${when}）の確認をお願いします。
+直してほしいところと、チャレンジの回数だけ返信してもらえればOKです（直しが無ければ「OK」と回数だけで大丈夫です）。`;
+  return `${head}
 
 ${c.tweets.map((t, i) => `【${i + 1}投稿目】\n${t}`).join('\n\n')}`;
 }
@@ -195,8 +200,11 @@ async function askOwner(botChannel, c, now = Date.now()) {
   const managerId = process.env.DISCORD_MANAGER_ID;
   // オニキに届く文そのものを見せる（選手に送る文はオーナーが確かめてから送る）
   const outgoing = require('./questions').outgoingMessages({ channel: 'oniki', topic: TOPIC(c.no), text: confirmText(c) }, 'confirm', { preview: true });
-  const head = await botChannel.send(`🔔 ${managerId ? `<@${managerId}> ` : ''}📚 **講座 第${c.no}回（${c.date.slice(5).replace('-', '/')}(水)${POST_TIME}投稿）の監修を、#onikiに次の文で頼みます**（下の${outgoing.length}通が、そのまま#onikiに届きます）
-✅で送る／このメッセージへの返信で直す指示／❌で作り直し`);
+  const lead = c.reconfirm
+    ? `📚 **講座 第${c.no}回（${c.date.slice(5).replace('-', '/')}(水)${POST_TIME}投稿）を、オニキの返事で直しました。直した版を#onikiにもう一度確認します**`
+    : `📚 **講座 第${c.no}回（${c.date.slice(5).replace('-', '/')}(水)${POST_TIME}投稿）の監修を、#onikiに次の文で頼みます**`;
+  const head = await botChannel.send(`🔔 ${managerId ? `<@${managerId}> ` : ''}${lead}（下の${outgoing.length}通が、そのまま#onikiに届きます）
+${c.reconfirm ? `直したところ：${c.reconfirm}\n` : ''}✅で送る／このメッセージへの返信で直す指示／❌で作り直し`);
   const sentIds = [];
   for (const m of outgoing) sentIds.push((await botChannel.send(m)).id);
   const body = { sentIds };
@@ -218,7 +226,7 @@ async function onOwnerReaction(client, botChannel, messageId, emoji, now = Date.
     const q = store.load('state').sentQuestions.filter(x => x.topic === TOPIC(c.no)).pop();
     if (q) setItem(c.no, { sentAt: q.sentAt, questionId: q.messageId, ownerApprovedAt: new Date(now).toISOString() });
   } else if (emoji === '❌') {
-    setItem(c.no, { tweets: null, ownerMsgId: null, ownerMsgIds: [], ownerAskedAt: null });
+    setItem(c.no, { tweets: null, reconfirm: null, ownerMsgId: null, ownerMsgIds: [], ownerAskedAt: null });
     await botChannel.send(`📚 講座 第${c.no}回の文案を作り直します（今夜21時）。`);
   }
   return true;
@@ -247,8 +255,15 @@ ${instruction}`, REVISE_SCHEMA, { effort: 'medium' });
   return true;
 }
 
-// 毎分：オニキの返事を文に反映して確定し、オーナーに知らせる
-async function applyAnswers(notify, now = Date.now()) {
+// 回数を埋めただけ（改行・空白の違いは無視）なら true。本文を直したらオニキに直した版を見せ直す（2026-11-05オーナー）
+function onlyCountFilled(before, after) {
+  const norm = s => s.replace(/\s+/g, '');
+  const pattern = norm(before.join('')).split(COUNT_MARK).map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\d+');
+  return new RegExp(`^${pattern}$`).test(norm(after.join('')));
+}
+
+// 毎分：オニキの返事を文に反映し、回数を埋めただけなら確定、本文を直したら直した版をオニキに確認し直す
+async function applyAnswers(notify, now = Date.now(), getBotChannel = null) {
   const answers = (store.load('state').confirmAnswers || []).filter(a => /^講座 第\d+回$/.test(a.topic || ''));
   for (const a of answers) {
     const c = items().find(x => TOPIC(x.no) === a.topic);
@@ -262,8 +277,18 @@ async function applyAnswers(notify, now = Date.now()) {
         await notify(`📚 講座 第${c.no}回：オニキの返事を反映しましたが、まだ確定できません（${r.unresolved}）。直したところ：${r.changes}`);
         continue;
       }
+      if (!onlyCountFilled(c.tweets, r.tweets)) {
+        const patch = { tweets: r.tweets, reconfirm: r.changes, ownerMsgId: null, ownerMsgIds: [], ownerMsgUrl: null, ownerAskedAt: null, sentAt: null, questionId: null, nudgedAt: null, ownerApprovedAt: null };
+        setItem(c.no, patch);
+        // チャンネルが取れなければ、21時の監修の処理が同じ依頼を出す
+        const ch = getBotChannel ? await getBotChannel().catch(() => null) : null;
+        if (ch) await askOwner(ch, { ...c, ...patch }, now).catch(err => console.error(`講座 第${c.no}回の再確認の依頼エラー（21時に再度）:`, err.message));
+        continue;
+      }
       setItem(c.no, { tweets: r.tweets, ready: true, readyAt: new Date(now).toISOString() });
-      await notify(`📚 講座 第${c.no}回をオニキの監修で確定しました（${c.date} ${POST_TIME}投稿。当日12時に届けます）。直したところ：${r.changes}`);
+      const d = new Date(`${c.date}T00:00:00Z`);
+      const day = `${d.getUTCMonth() + 1}/${d.getUTCDate()}(${'日月火水木金土'[d.getUTCDay()]})`;
+      await notify(`📚 講座 第${c.no}回がオニキの監修で確定しました。${day} 12時に投稿文を届けます。✅でBotが${POST_TIME}にツリーで投稿します。今は対応不要です。${c.reconfirm ? '' : `\n直したところ：${r.changes}`}`);
     } catch (err) {
       console.error(`講座 第${c.no}回の返事の反映エラー（次の返事で再度）:`, err.message);
       setItem(c.no, { appliedAnswers: (c.appliedAnswers || []).filter(x => x !== a.id) });
