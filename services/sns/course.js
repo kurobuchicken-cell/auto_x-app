@@ -40,7 +40,7 @@ const CURRICULUM = [
 
 // ハッシュタグは1投稿目だけ（ツリーの2投稿目以降に付けない）。💛はどの投稿からも外す
 function withRules(tweets) {
-  return tweets.map((t, i) => (i === 0 ? drafts.enforceRules(t) : t.replace(/💛/g, '').trim()));
+  return tweets.map((t, i) => (i === 0 ? drafts.enforceRules(t) : drafts.fixLineBreaks(t.replace(/💛/g, '').trim())));
 }
 
 function items() {
@@ -84,12 +84,12 @@ function formatRules(c) {
   const next = CURRICULUM.find(x => x[0] === c.no + 1);
   return `## 投稿の形（オーナー確定）
 - 2〜3投稿のツリー。1投稿目＝講座の中身。冒頭は【オニキ監修 スト6初心者講座 第${c.no}回】、最後に「宿題はツリーに👇」（中身が多くて3投稿にするときは「続きと宿題はツリーに👇」）と #NthWIN #SF6
-- 最後の投稿＝宿題。数えられる宿題は「〇〇チャレンジ」にして「10回中、何回できるかな？」「オニキは${COUNT_MARK}回でした。」と書く（回数はオニキの監修でもらうので、${COUNT_MARK}のまま残す）。続けて「できたら」「#オニキのスト6講座」「を付けて報告してください。」を3行で、「🥷オニキ @oniki_dayo」「から返信が届くかもしれません。」、「分からないことは、」「このツリーにリプライで質問してください。」、「いただいた質問に、」「次回の講座でお答えすることがあります。」、最後に${next ? `「次回は「${next[2]}」。」` : '卒業の言葉（次回予告は無し）'}
+- 最後の投稿＝宿題。数えられる宿題は「〇〇チャレンジ」にして「10回中、何回できるかな？」「オニキは${COUNT_MARK}回でした。」と書く（回数はオニキの監修でもらうので、${COUNT_MARK}のまま残す）。続けて「できたら #オニキのスト6講座 を付けて報告してください。」「🥷オニキ @oniki_dayo から返信が届くかもしれません。」を1行ずつ、空白行のあと「分からないことは、このツリーにリプライで質問してください。」「いただいた質問に、次回の講座でお答えすることがあります。」を1行ずつ、最後に${next ? `「次回は「${next[2]}」。」` : '卒業の言葉（次回予告は無し）'}
 - 宿題はトレーニングモードで一人でできる内容。クラシック・モダン、どのキャラでも使える内容にする
 - 「取り上げます」「1問お答えします」は上から目線・約束になるので使わない
 - オニキを「先生」とは書かない。「オニキ監修」と書き、オニキ本人が書いた風にはしない
 - ゲーム画面・画像は使わない前提で、文字だけで分かるように書く
-- 段落ごとに空白行。1文ごとに改行し、長い文は読点で改行。1行は全角22文字ほどまで
+- 段落ごとに空白行。「。」「？」「！」のあとで改行し、文の途中（読点など）では改行しない
 - 💛は使わない`;
 }
 
@@ -114,12 +114,7 @@ ${prev.map(p => `--- ${p.title}\n${p.tweets.join('\n\n（ツリー）\n')}`).joi
 - ハッシュタグ（#NthWIN #SF6）は1投稿目の最後だけに付ける
 - sources に確かめたページのURLを入れる
 - tweets にはXにそのまま貼れる本文だけを入れる（1要素＝1投稿）`;
-  let r = await claude.researchJSON(prompt, TWEETS_SCHEMA, { effort: 'high' });
-  const long = r.tweets.flatMap(t => drafts.longLines(t));
-  if (long.length) {
-    console.warn(`⚠️ 講座 第${c.no}回：1行が長すぎるため作り直す：${long.join(' / ')}`);
-    r = await claude.callJSON(`次の投稿文の、スマホで1行に収まらない長い行（${long.map(l => `「${l}」`).join('、')}）を、読点や意味の切れ目で改行して、1行を全角22文字ほどまでにしてください。言葉は変えない。\n\n${JSON.stringify(r)}`, TWEETS_SCHEMA, { effort: 'low' });
-  }
+  const r = await claude.researchJSON(prompt, TWEETS_SCHEMA, { effort: 'high' });
   await glossary.learn(r.tweets.join('\n')).catch(err => console.error('用語の学習エラー（続行）:', err.message));
   return { tweets: withRules(r.tweets), sources: r.sources };
 }
@@ -160,7 +155,7 @@ ${raw}
 
 - 返事で直すように言われたところだけを直す。返事に無い内容・言葉を足さない
 - ${COUNT_MARK} は、返事にある回数（数字）で埋める
-- 直したあとも、1文ごとに改行し、1行は全角22文字ほどまでにする
+- 直したあとも、「。」「？」「！」のあとで改行し、文の途中では改行しない
 - changes に、何を直したかを1〜2文で書く（直しが無ければ「直しなし」）
 - 返事の意味が分からない・回数が無い・オニキが内容を作り直すと言っている など、確定できないときは unresolved にその理由を書く（確定できるなら空文字）`;
   const r = await claude.callJSON(prompt, APPLY_SCHEMA, { effort: 'medium' });
@@ -243,7 +238,7 @@ const REVISE_SCHEMA = {
 async function onOwnerReply(botChannel, messageId, instruction, now = Date.now()) {
   const c = byOwnerMsg(messageId);
   if (!c) return false;
-  const r = await claude.callJSON(`「オニキ監修 スト6初心者講座」第${c.no}回の投稿文を、オーナーの指示どおりに直してください。指示に無いところは変えない。1文ごとに改行し、1行は全角22文字ほどまで。${COUNT_MARK}はそのまま残す。
+  const r = await claude.callJSON(`「オニキ監修 スト6初心者講座」第${c.no}回の投稿文を、オーナーの指示どおりに直してください。指示に無いところは変えない。「。」「？」「！」のあとで改行し、文の途中では改行しない。${COUNT_MARK}はそのまま残す。
 
 ## 今の投稿文（1要素＝1投稿）
 ${JSON.stringify(c.tweets)}

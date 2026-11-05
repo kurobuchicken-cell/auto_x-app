@@ -25,8 +25,15 @@ const PATTERN_SCHEMA = {
 };
 
 // プロンプトで指示していても漏れることがあるため、ブランドルールは最後にコードで保証する
+// 「。」のあとで改行し、読点では改行しない（2026-11-05オーナー「改行が多い」「。のあとは改行」）。Claudeは癖で読点で折るのでコードでそろえる
+function fixLineBreaks(text) {
+  return (text || '')
+    .replace(/、[ \t]*\n(?=[^\s#])/g, '、')
+    .replace(/([。？！])[ 　]*(?=[^\s」』）)。？！!?‼])/gu, '$1\n');
+}
+
 function enforceRules(text, { tournament = false } = {}) {
-  let t = text.replace(/💛/g, '').trim();
+  let t = fixLineBreaks(text.replace(/💛/g, '').trim());
   if (tournament) t = t.replace(/[ \t]*#SF6(?!\w)/g, '').trim();
   const tags = (tournament ? ['#NthWIN'] : ['#NthWIN', '#SF6']).filter(tag => !t.includes(tag));
   if (tags.length) t += `\n\n${tags.join(' ')}`;
@@ -135,13 +142,6 @@ function similarClosing(closing, recent) {
 
 const oneLine = s => s.replace(/\n/g, '');
 
-// スマホで1行に収まらない行（全角換算。半角は0.5）。URL・ハッシュタグだけの行は数えない
-const LINE_LIMIT = 26;
-const lineWidth = s => [...s].reduce((n, ch) => n + (ch.charCodeAt(0) < 128 ? 0.5 : 1), 0);
-function longLines(text) {
-  return (text || '').split('\n').filter(l => !/^\s*(https?:\/\/\S+|(#\S+\s*)+)$/.test(l) && lineWidth(l.replace(/https?:\/\/\S+/g, '')) > LINE_LIMIT);
-}
-
 // アンケートの選択肢はXの決まり（2〜4個、1つ25文字まで）。【要確認】の選択肢は出せない
 function pollProblems(poll) {
   if (!poll.length) return [];
@@ -190,9 +190,8 @@ ${closings.map(c => `・${oneLine(c)}`).join('\n')}` : ''}`;
     if (patterns.length >= count) {
       const checked = await verifyFacts(material, extra, patterns.slice(0, count), terms);
       const repeats = checked.map(p => similarClosing(closingOf(p.text), closings)).filter(Boolean);
-      const long = format ? [] : checked.flatMap(p => textParts(p).flatMap(longLines));
       const pollBad = checked.flatMap(p => pollProblems(p.poll));
-      if ((repeats.length || long.length || pollBad.length) && attempt === 1) {
+      if ((repeats.length || pollBad.length) && attempt === 1) {
         if (pollBad.length) {
           console.warn(`⚠️ アンケートの選択肢が使えないため再生成：${pollBad.join(' / ')}`);
           prompt += `\n\n前回作った文案のアンケートの選択肢が使えませんでした（${pollBad.join('、')}）。材料にあるものだけで2〜4個、1つ25文字までにするか、アンケートにしない形で作り直してください。`;
@@ -201,13 +200,9 @@ ${closings.map(c => `・${oneLine(c)}`).join('\n')}` : ''}`;
           console.warn(`⚠️ 最近と同じ締めのため再生成：${repeats.map(oneLine).join(' / ')}`);
           prompt += `\n\n前回作った文案は、締めが最近の投稿と同じ型でした（${repeats.map(r => `「${oneLine(r)}」`).join('、')}に似ている）。締めを別の形にして作り直してください。`;
         }
-        if (long.length) {
-          console.warn(`⚠️ 1行が長すぎるため再生成：${long.join(' / ')}`);
-          prompt += `\n\n前回作った文案に、スマホで1行に収まらない長い行がありました（${long.map(l => `「${l}」`).join('、')}）。読点や意味の切れ目で改行し、1行を全角22文字ほどまでにして作り直してください。`;
-        }
         continue;
       }
-      const clean = t => t.replace(/💛/g, '').trim();
+      const clean = t => fixLineBreaks(t.replace(/💛/g, '').trim());
       return checked.map(p => {
         const bad = pollProblems(p.poll);
         // 作り直しても選択肢が使えなければ、届けないよう【要確認】の印を付ける
@@ -373,4 +368,4 @@ async function deliver(channel, item) {
 // 【要確認】は本文以外（メモ・選択肢・リプライ）に残ることもある。どこかに残っていれば届けない
 const hasUnchecked = d => (d.queuedPatterns || []).some(p => [p.text, ...(p.thread || []), ...(p.poll || []), p.followUp || '', p.note || ''].some(s => /【要確認/.test(s)));
 
-module.exports = { offerBotPost, hasUnchecked, pollProblems, longLines, closingOf, similarClosing, recentClosings, generatePatterns, draftAndSend, sendPatterns, enforceRules, TYPES, enqueue, requeue, queued, expireQueue, releaseUnpostedAnswers, deliver, isQueued };
+module.exports = { offerBotPost, hasUnchecked, pollProblems, fixLineBreaks, closingOf, similarClosing, recentClosings, generatePatterns, draftAndSend, sendPatterns, enforceRules, TYPES, enqueue, requeue, queued, expireQueue, releaseUnpostedAnswers, deliver, isQueued };

@@ -166,7 +166,7 @@ async function revise(channel, item, instruction, repliedId = null) {
   }
   const base = basePattern(item, repliedId);
   const slot = item.xpost?.slot || SLOT;
-  const r = await require('./claude').callJSON(`Xに出す投稿を、オーナーの指示どおりに直してください。指示に無いところは変えない。1文ごとに改行し、1行は全角22文字ほどまで。ハッシュタグは1投稿目だけ。
+  const r = await require('./claude').callJSON(`Xに出す投稿を、オーナーの指示どおりに直してください。指示に無いところは変えない。「。」「？」「！」のあとで改行し、文の途中では改行しない。ハッシュタグは1投稿目だけ。
 
 ## 今の投稿
 ${JSON.stringify({ text: base.text, thread: base.thread || [], poll: base.poll || [], follow_up: base.followUp || '' })}
@@ -174,10 +174,10 @@ ${JSON.stringify({ text: base.text, thread: base.thread || [], poll: base.poll |
 
 ## オーナーの指示
 ${instruction}`, REVISE_SCHEMA, { effort: 'medium' });
-  const p = { text: r.text.replace(/💛/g, '').trim(), thread: r.thread.map(t => t.replace(/💛/g, '').trim()).filter(Boolean), poll: r.poll.map(o => o.trim()).filter(Boolean), followUp: r.follow_up.replace(/💛/g, '').trim() };
+  const fix = t => drafts.fixLineBreaks(t.replace(/💛/g, '').trim());
+  const p = { text: fix(r.text), thread: r.thread.map(fix).filter(Boolean), poll: r.poll.map(o => o.trim()).filter(Boolean), followUp: fix(r.follow_up) };
   const bad = drafts.pollProblems(p.poll);
-  const long = [p.text, ...p.thread, p.followUp].flatMap(drafts.longLines);
-  const note = [bad.length ? `⚠️ アンケートの選択肢が使えません（${bad.join('、')}）。もう一度、返信で直す指示をください` : '', long.length ? `⚠️ 1行が長い行があります（${long.map(l => `「${l}」`).join('、')}）` : ''].filter(Boolean).join('\n');
+  const note = bad.length ? `⚠️ アンケートの選択肢が使えません（${bad.join('、')}）。もう一度、返信で直す指示をください` : '';
   const byBot = !bad.length && botPostable(p);
   const how = bad.length ? '' : byBot
     ? `\n✅でBotが${slot}に投稿します（過ぎていればすぐ）／この文案への返信でさらに直す／❌で取りやめ`
