@@ -86,11 +86,15 @@ async function collectPostMetrics(now = Date.now()) {
 }
 
 // Botが出したツリー（講座など）は、2投稿目以降が見られているかを投稿ごとに記録する。
-// タイムラインの読み取りは返信を除くので、ツリーの投稿は投稿IDで読む。表示は数日で落ち着くので7日間だけ読む
+// タイムラインの読み取りは返信を除くので、ツリーの投稿は投稿IDで読む（1投稿0.005ドル）。
+// 比べたいのは1投稿目に対する割合なので、表示が落ち着く3日後に1回だけ読む（読めなければ7日目まで毎朝試す）
+const THREAD_READ_AFTER_DAYS = 3;
 const THREAD_WINDOW_DAYS = 7;
 
 async function collectThreadMetrics(now = Date.now()) {
-  const trees = store.load('drafts').items.filter(d => (d.xpost?.ids || []).length > 1 && d.postedAt && now - Date.parse(d.postedAt) <= THREAD_WINDOW_DAYS * DAY_MS);
+  const done = store.load('growth').threads || {};
+  const trees = store.load('drafts').items.filter(d => (d.xpost?.ids || []).length > 1 && d.postedAt && !done[d.xpost.ids[0]]
+    && now - Date.parse(d.postedAt) >= THREAD_READ_AFTER_DAYS * DAY_MS && now - Date.parse(d.postedAt) <= THREAD_WINDOW_DAYS * DAY_MS);
   const ids = trees.flatMap(d => d.xpost.ids);
   if (!ids.length) return 0;
   const at = new Date(now).toISOString();
