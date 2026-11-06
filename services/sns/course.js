@@ -138,9 +138,10 @@ const APPLY_SCHEMA = {
   properties: {
     tweets: { type: 'array', items: { type: 'string' } },
     changes: { type: 'string' },
+    reply: { type: 'string', enum: ['ok', 'changes', 'unclear'] },
     unresolved: { type: 'string' },
   },
-  required: ['tweets', 'changes', 'unresolved'],
+  required: ['tweets', 'changes', 'reply', 'unresolved'],
   additionalProperties: false,
 };
 
@@ -157,8 +158,14 @@ ${raw}
 - ${COUNT_MARK} は、返事にある回数（数字）で埋める
 - 直したあとも、「。」「？」「！」のあとで改行し、文の途中では改行しない
 - changes に、何を直したかを1〜2文で書く（直しが無ければ「直しなし」）
-- 返事の意味が分からない・回数が無い・オニキが内容を作り直すと言っている など、確定できないときは unresolved にその理由を書く（確定できるなら空文字）`;
+- reply は、返事が「このままでよい（OK・回数だけ等）」なら ok、直す指示があれば changes、意味が分からなければ unclear
+- unresolved には、オニキの返事について確定できない理由だけを書く（返事の意味が分からない・回数が無い・オニキが内容を作り直すと言っている など）。確定できるなら空文字。講座の形はオーナーが決めたものなので、チームのほかの投稿の決まり（表記・文字数・ハッシュタグ・改行など）との違いは unresolved に書かない`;
   const r = await claude.callJSON(prompt, APPLY_SCHEMA, { effort: 'medium' });
+  // 「OK」で本文も変わっていないのに、返事と関係のない決まりを理由に止めたことがある（2026-11-05 第2回。HISTORY.md 2026-11-06）
+  if (r.unresolved && r.reply === 'ok' && onlyCountFilled(c.tweets, r.tweets) && !r.tweets.some(t => t.includes(COUNT_MARK))) {
+    console.warn(`講座 第${c.no}回：返事はOKで本文も変わらないため、確定を止める理由を無視した（${r.unresolved}）`);
+    r.unresolved = '';
+  }
   if (!r.unresolved && r.tweets.some(t => t.includes(COUNT_MARK))) r.unresolved = 'チャレンジの回数が返事に無い';
   return { ...r, tweets: withRules(r.tweets) };
 }
