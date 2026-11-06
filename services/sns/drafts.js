@@ -288,8 +288,8 @@ async function enqueue(material, { type = null, header = '', extra = '', source 
 }
 
 // 同じ回答に追記があったとき、まだ送っていない在庫を作り直す（並び順は元のまま）
-async function requeue(id, material, { type = null, header = '', count = 1 } = {}) {
-  const patterns = await generatePatterns(material, { type, count });
+async function requeue(id, material, { type = null, header = '', count = 1, extra = '' } = {}) {
+  const patterns = await generatePatterns(material, { type, count, extra });
   return store.update('drafts', d => {
     const item = d.items.find(x => x.id === id && x.queuedAt && !x.deliveredAt && !x.droppedAt);
     if (!item) return null;

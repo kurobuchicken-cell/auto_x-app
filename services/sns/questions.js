@@ -16,8 +16,8 @@ const QUESTION_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        properties: { channel: { type: 'string', enum: CHANNELS }, target: { type: 'string' }, text: { type: 'string' } },
-        required: ['channel', 'target', 'text'],
+        properties: { channel: { type: 'string', enum: CHANNELS }, target: { type: 'string' }, text: { type: 'string' }, post_on: { type: 'string' } },
+        required: ['channel', 'target', 'text', 'post_on'],
         additionalProperties: false,
       },
     },
@@ -67,6 +67,7 @@ async function generate(instruction = '', current = null) {
 - target：2人で1つのチャンネル（双子）は、兄か弟のどちらか1人を指名して聞く（target に「双子(兄)」か「双子(弟)」）。基本は${nextTarget('双子') || '双子(兄)'}（前回と逆の人）。ただし、片方しか出ていない大会・イベントの話なら、その人を指名する。質問文は指名した1人に向けて書く（「どちらか」「2人とも」と書かない）。ほかのチャンネルの target は空文字
 - 最近した質問と同じことを聞かない
 - 質問文だけを書く（あいさつや前置きは不要）
+- post_on：答えで作る投稿を出す日が決まっている質問（誕生日・記念日・大会の前日など、その日に出す意味がある話）は、その日を YYYY-MM-DD で書く。決まっていなければ空文字
 
 ## 3週間以内の予定
 ${ctx.upcoming.map(f => `${f.date} ${f.summary}`).join('\n') || 'なし'}
@@ -156,7 +157,7 @@ async function sendAll(client, botChannel, list, purpose = 'post') {
       const sentMsg = await ch.send(first);
       for (const m of rest) await ch.send(m);
       store.update('state', s => {
-        s.sentQuestions.push({ channelId: ch.id, messageId: sentMsg.id, channelName: q.channel, target: q.target || null, question: q.text, purpose, topic: q.topic || null, sentAt: new Date().toISOString() });
+        s.sentQuestions.push({ channelId: ch.id, messageId: sentMsg.id, channelName: q.channel, target: q.target || null, question: q.text, purpose, topic: q.topic || null, postOn: /^\d{4}-\d{2}-\d{2}$/.test(q.post_on || '') ? q.post_on : null, sentAt: new Date().toISOString() });
       });
       ok.push(`#${q.channel}${q.target ? `（${q.target}）` : ''}`);
     } catch (err) {
@@ -240,6 +241,17 @@ function findPrevAnswer(b) {
     .pop() || null;
 }
 
+// 誕生日など出す日が決まっている質問の答えは、その日に届ける（2026-11-06オーナー「当日にハッピーバースデー投稿と一緒にして」）
+function postDateOf(b, now = Date.now()) {
+  const q = store.load('state').sentQuestions.find(x => x.messageId === b.questionId);
+  return q?.postOn && q.postOn >= todayJST(now) ? q.postOn : null;
+}
+
+const dateOpts = (b, now) => {
+  const on = postDateOf(b, now);
+  return on ? { notBefore: on, deadline: on, extra: `この投稿は${on}当日に出す。質問にその日に出す理由（誕生日など）があれば、その日の投稿として書く（誕生日なら当日のお祝いと一緒にする）` } : {};
+};
+
 function answerMaterial(b, author, answer) {
   return `${b.target || playersOf(b.channelName).join('・')}への質問「${b.question}」に、${author}がこう答えた：「${answer}」`;
 }
@@ -292,6 +304,7 @@ async function flushAnswers(now = Date.now(), notify = null) {
     });
     try {
       await drafts.enqueue(answerMaterial(b, author, judged.answer), {
+        ...dateOpts(b, now),
         type: '選手の声',
         source: 'answer',
         answerIds: [id],
@@ -364,12 +377,13 @@ async function mergeAnswer(prev, b, raw, judged, now) {
   const item = store.load('drafts').items.filter(d => d.answerIds?.includes(prev.id)).pop();
   try {
     if (item && drafts.isQueued(item)) {
-      await drafts.requeue(item.id, material, { type: '選手の声', header: answerHeader(b, judged.answer) });
+      await drafts.requeue(item.id, material, { type: '選手の声', header: answerHeader(b, judged.answer), extra: dateOpts(b, now).extra || '' });
       console.log(`📦 #${b.channelName} の追記に合わせて、在庫の文案を作り直した`);
     } else if (!item || !prev.usedAt) {
       console.log(`📦 #${b.channelName} の追記は、週の文案の材料として残した`);
     } else if (judged.adds_new) {
       await drafts.enqueue(material, {
+        ...dateOpts(b, now),
         type: '選手の声',
         source: 'answer',
         answerIds: [prev.id],

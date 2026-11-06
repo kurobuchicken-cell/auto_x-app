@@ -116,13 +116,17 @@ function deliveryDue(today, allStock) {
   const left = plan.posts - delivered;
   // 大会の告知・結果報告の日は1日に投稿が重ならないよう避ける。ただし残りの日数で計画に届かなくなるなら出す
   const blockedByEvent = hasEventDraftToday(today) && left < 7 - day + 1;
-  return { plan, delivered, due, need: !blockedByEvent && (delivered < due || urgent), blockedByEvent };
+  const dueToday = allStock.some(d => d.deadline === today && !drafts.hasUnchecked(d));
+  return { plan, delivered, due, need: dueToday || (!blockedByEvent && (delivered < due || urgent)), blockedByEvent };
 }
 
 async function judgeDelivery(allStock, today, now) {
   const { plan, delivered, due, need, blockedByEvent } = deliveryDue(today, allStock);
   const progress = `今週の計画 ${plan.posts}本のうち${delivered}本届けた（今日までの目安${due}本）`;
   if (!need) return { pick: null, reason: blockedByEvent ? `大会の告知・結果報告か講座を出す日（${progress}）` : `計画どおり（${progress}）` };
+  // 今日が締め切り（誕生日の当日など）の文案は、型の重なりやClaudeの選び方に関係なく今日届ける
+  const dueToday = allStock.filter(d => d.deadline === today && !drafts.hasUnchecked(d));
+  if (dueToday.length) return { pick: dueToday[0], reason: `今日（${today}）出す日が決まっている投稿です（${progress}）` };
   let stock = eligibleStock(allStock, today);
   if (!stock.length) {
     // 在庫が無くて計画を守れない日は、その場で1本作る（在庫切れで出せない週を作らない）
