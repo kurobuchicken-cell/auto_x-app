@@ -85,6 +85,42 @@ async function collectPostMetrics(now = Date.now()) {
   return rows.length;
 }
 
+// Botが出したツリー（講座など）は、2投稿目以降が見られているかを投稿ごとに記録する。
+// タイムラインの読み取りは返信を除くので、ツリーの投稿は投稿IDで読む。表示は数日で落ち着くので7日間だけ読む
+const THREAD_WINDOW_DAYS = 7;
+
+async function collectThreadMetrics(now = Date.now()) {
+  const trees = store.load('drafts').items.filter(d => (d.xpost?.ids || []).length > 1 && d.postedAt && now - Date.parse(d.postedAt) <= THREAD_WINDOW_DAYS * DAY_MS);
+  const ids = trees.flatMap(d => d.xpost.ids);
+  if (!ids.length) return 0;
+  const at = new Date(now).toISOString();
+  const byId = {};
+  for (let i = 0; i < ids.length; i += 100) {
+    const j = await xauth.xUserGet(`/tweets?ids=${ids.slice(i, i + 100).join(',')}&tweet.fields=public_metrics,non_public_metrics`);
+    for (const t of j.data || []) byId[t.id] = { at, imp: t.public_metrics.impression_count, profile: t.non_public_metrics?.user_profile_clicks ?? null, likes: t.public_metrics.like_count, replies: t.public_metrics.reply_count };
+  }
+  store.update('growth', g => {
+    g.threads = g.threads || {};
+    for (const d of trees) {
+      const th = g.threads[d.xpost.ids[0]] || { topic: d.topic, type: d.type || null, postedAt: d.postedAt, posts: d.xpost.ids.map(id => ({ id, history: [] })) };
+      for (const p of th.posts) if (byId[p.id]) p.history = [...p.history.filter(h => h.at.slice(0, 10) !== at.slice(0, 10)), byId[p.id]];
+      g.threads[d.xpost.ids[0]] = th;
+    }
+  });
+  return ids.length;
+}
+
+// 週の見直しに渡す、ツリーの投稿ごとの表示（1投稿目を100としたときの割合も）
+function threadLines(now = Date.now()) {
+  return Object.values(store.load('growth').threads || {})
+    .filter(th => now - Date.parse(th.postedAt) <= 60 * DAY_MS)
+    .sort((a, b) => a.postedAt.localeCompare(b.postedAt))
+    .map(th => {
+      const imps = th.posts.map(p => p.history[p.history.length - 1]?.imp ?? null);
+      return `・${todayJST(Date.parse(th.postedAt))} ${th.topic}（${th.posts.length}投稿）：${imps.map((v, i) => `${i + 1}投稿目 ${v ?? '—'}${i && v !== null && imps[0] ? `（${Math.round((v / imps[0]) * 100)}%）` : ''}`).join(' → ')}`;
+    });
+}
+
 // 自分のフォロワーの読み取りは1人0.001ドル（本人の認証で読むとき）。1日の新規は通常5〜10人なので
 // 50人ずつ読み、前回までに見た人に当たったら止める。初回は数えずに「見た人」をためるだけ
 const FOLLOWS_PAGE = 50;
@@ -142,6 +178,12 @@ async function runDaily(channel, managerId, now = Date.now()) {
   } catch (err) {
     console.error('投稿の数字の記録エラー:', err.message);
     await notifyAuthFailure(channel, managerId, err).catch(e => console.error('認証切れの通知エラー:', e.message));
+  }
+  try {
+    const n = await collectThreadMetrics(now);
+    if (n) console.log(`🧵 ツリーの投稿${n}件の数字を記録`);
+  } catch (err) {
+    console.error('ツリーの数字の記録エラー:', err.message);
   }
   try {
     const f = await trackFollows(now);
@@ -245,7 +287,8 @@ function typeLedger() {
 // 週次レポートに入れる「投稿 → プロフィール → フォロー」の要約
 function funnelLines(now = Date.now()) {
   const prev = (store.load('state').reviews || []).slice(-1)[0] || null;
-  return ['**先週の結果（投稿 → プロフィール → 新規フォロー）**', ...weekCheck(prev, now).lines].join('\n');
+  const threads = threadLines(now).slice(-4);
+  return ['**先週の結果（投稿 → プロフィール → 新規フォロー）**', ...weekCheck(prev, now).lines, ...(threads.length ? ['', '**ツリーの投稿ごとの表示（直近4本）**', ...threads] : [])].join('\n');
 }
 
 // ── 毎週の見直し（PDCAのC→A→次のP） ─────────────────────────────
@@ -301,6 +344,9 @@ ${check.lines.join('\n')}
 ## 投稿の種類ごとの成績（記録のある全期間）
 ${ledger.join('\n') || 'まだ記録がない'}
 
+## ツリーの投稿ごとの表示（Botが出したツリー。2投稿目以降が見られているか。ツリーの形と1投稿目に何を入れるかを決める材料）
+${threadLines(now).join('\n') || 'まだ記録がない'}
+
 ## 書き方
 - result：予想と結果を数字で1〜2文。判定「${check.verdict}」をそのまま使う
 - learning：分かったことを1〜2文。上の数字に無いことを事実として書かない。分からなければ「まだ分からない」と書く
@@ -354,4 +400,4 @@ function currentPolicy() {
   return `今週の方針：${r.policy}\n今週の仮説：${r.hypothesis}\n今週の計画：在庫から${plan.posts}本${plan.types.length ? `（${plan.types.map(t => `${t.type}${t.count}本`).join('・')}）` : ''}`;
 }
 
-module.exports = { snapshotFollowers, collectPostMetrics, trackFollows, runDaily, funnelLines, slotKey, weeklyReview, weekCheck, typeLedger, dayRows, reviewLines, currentPolicy, currentPlan, BASELINE_FOLLOWS_PER_DAY };
+module.exports = { collectThreadMetrics, threadLines, snapshotFollowers, collectPostMetrics, trackFollows, runDaily, funnelLines, slotKey, weeklyReview, weekCheck, typeLedger, dayRows, reviewLines, currentPolicy, currentPlan, BASELINE_FOLLOWS_PER_DAY };
