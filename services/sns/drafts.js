@@ -317,7 +317,8 @@ function expireQueue(today = todayJST()) {
   const dropped = store.update('drafts', d => {
     const out = [];
     for (const item of d.items.filter(isQueued)) {
-      const reason = item.deadline && item.deadline < today ? '締め切り切れ' : readySince(item) < addDays(today, -STOCK_MAX_DAYS) ? '古すぎる' : null;
+      // 締め切りのある文案は締め切りまで残す（古さで外すと、締め切り前に出せなくなる。HISTORY.md 2026-11-09）
+      const reason = item.deadline ? (item.deadline < today ? '締め切り切れ' : null) : readySince(item) < addDays(today, -STOCK_MAX_DAYS) ? '古すぎる' : null;
       if (!reason) continue;
       item.droppedAt = new Date().toISOString();
       item.dropReason = reason;

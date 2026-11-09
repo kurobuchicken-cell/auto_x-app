@@ -312,6 +312,16 @@ async function flushAnswers(now = Date.now(), notify = null) {
         header: answerHeader(b, judged.answer),
       });
       console.log(`📦 #${b.channelName} の回答を在庫に入れた`);
+      // 答えの文案は当日のお祝いと一緒に作るので、Botが先に作っておいた誕生日の文案と2本にしない
+      const on = postDateOf(b, now);
+      if (on) {
+        store.update('drafts', d => {
+          for (const x of d.items.filter(x => x.source === 'birthday' && x.deadline === on && drafts.isQueued(x)
+            && playersOf(b.channelName).some(n => x.topic.includes(n)))) {
+            Object.assign(x, { droppedAt: new Date().toISOString(), dropReason: '本人の答えの文案に置き換え' });
+          }
+        });
+      }
     } catch (err) {
       // 文案にできなくても、回答は週の文案の材料として残す
       console.error('回答の文案づくりエラー（週の文案の材料に回す）:', err);

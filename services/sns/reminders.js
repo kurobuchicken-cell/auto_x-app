@@ -1,13 +1,69 @@
+const path = require('path');
+const { execFileSync } = require('child_process');
 const store = require('./store');
 const report = require('./report');
 const drafts = require('./drafts');
-const { todayJST } = require('./prompt');
+const { todayJST, PLAYERS, ageOn } = require('./prompt');
 const { addDays } = require('./weekly');
 const claude = require('./claude');
 
 const MAX_REMINDS = 3;
 const QUESTION_GRACE_HOURS = 20;
 const EMBARGO_STALE_DAYS = 14;
+const BIRTHDAY_LEAD_DAYS = 10;
+const DATED_WARN_DAYS = 3;
+
+// 直しをGitHubに上げたまま本番に入れ忘れると、直したはずの不具合がそのまま起きる（HISTORY.md 2026-11-09）
+function codeBehind() {
+  const git = args => execFileSync('git', args, { cwd: path.join(__dirname, '..', '..'), timeout: 30000, encoding: 'utf8' }).trim();
+  git(['fetch', '--quiet', 'origin', 'main']);
+  return { behind: Number(git(['rev-list', '--count', 'HEAD..origin/main'])), head: git(['rev-parse', '--short', 'origin/main']) };
+}
+
+// 誕生日の投稿を週の文案のClaudeが思い出すかに任せると、当日に1本も無いことがある（HISTORY.md 2026-11-09）
+function upcomingBirthdays(today) {
+  const groups = {};
+  for (const p of PLAYERS) {
+    const md = p.birth.slice(5);
+    const year = Number(today.slice(0, 4));
+    const date = `${year}-${md}` >= today ? `${year}-${md}` : `${year + 1}-${md}`;
+    if (date > addDays(today, BIRTHDAY_LEAD_DAYS)) continue;
+    (groups[date] = groups[date] || []).push(p);
+  }
+  return Object.entries(groups).map(([date, players]) => ({ date, players }));
+}
+
+const coversBirthday = (d, date, names) => d.deadline === date && !d.droppedAt
+  && (d.source === 'birthday' || /誕生日/.test(`${d.topic || ''}${d.header || ''}`) || names.some(n => (d.topic || '').includes(n)));
+
+async function ensureBirthdayDrafts(today) {
+  const made = [];
+  for (const { date, players } of upcomingBirthdays(today)) {
+    const names = players.map(p => p.name);
+    if (store.load('drafts').items.some(d => coversBirthday(d, date, names))) continue;
+    const who = names.join('・');
+    const age = ageOn(players[0].birth, date);
+    const results = store.load('facts').items
+      .filter(f => !f.embargoed && f.kind === '結果' && (f.players || []).some(n => names.includes(n)) && f.date >= addDays(today, -180))
+      .slice(-8).map(f => `- ${f.date} ${f.summary}`);
+    try {
+      const item = await drafts.enqueue(`${who}が${date}に${age}歳の誕生日を迎える。\n記録にある最近の結果：\n${results.join('\n') || 'なし'}`, {
+        type: '選手の声',
+        source: 'birthday',
+        topic: `${who}の${age}歳の誕生日`,
+        header: `🎂 **今日は${who}の${age}歳の誕生日です**`,
+        extra: `この投稿は${date}当日に出す、誕生日のお祝いの投稿。本人の言葉は材料に無いので、本人の発言や気持ちは書かない`,
+        deadline: date,
+        notBefore: date,
+      });
+      console.log(`🎂 ${who}の誕生日（${date}）の文案を在庫に入れた`);
+      made.push(item);
+    } catch (err) {
+      console.error(`誕生日の文案づくりエラー（明日また作る）：${who}`, err.message);
+    }
+  }
+  return made;
+}
 
 // 同じ件を何度も知らせないよう、件ごとの回数をファイルに残す
 function remindCount(key) {
@@ -56,6 +112,19 @@ async function collect(now) {
   }
 
   items.push(...require('./course').pendingItems(today, now));
+
+  // 日付の決まった文案に【要確認】が残ると、その日に黙って届かない（HISTORY.md 2026-11-09）
+  for (const d of store.load('drafts').items.filter(x => drafts.isQueued(x) && x.deadline && x.deadline >= today && x.deadline <= addDays(today, DATED_WARN_DAYS) && drafts.hasUnchecked(x))) {
+    const asks = [...new Set(JSON.stringify(d.queuedPatterns || []).match(/【要確認[^】]*】/g) || [])];
+    items.push({ key: `dated:${d.id}`, max: DATED_WARN_DAYS + 1, text: `⚠️ ${d.deadline}に出す「${d.topic}」は【要確認】が残っていて、このままでは届けられません：${asks.join(' ')}` });
+  }
+
+  try {
+    const { behind, head } = codeBehind();
+    if (behind) items.push({ key: `deploy:${head}`, text: `🛠️ 本番のBotのコードがGitHubより${behind}件古いままです（直しが本番に入っていません。Claudeに本番へ入れるよう伝えてください）` });
+  } catch (err) {
+    items.push({ key: `deploy-check:${today}`, max: 1, text: `🛠️ 本番のBotのコードがGitHubと同じか確かめられませんでした（${String(err.message).slice(0, 100)}）` });
+  }
 
   // 新規フォローが測れないと毎週の判定が止まるので、2日続けて記録が無ければ知らせる
   const follows = store.load('growth').follows || [];
@@ -194,6 +263,7 @@ async function runDaily(channel, managerId, now = Date.now()) {
   }
   drafts.expireQueue(today);
   drafts.releaseUnpostedAnswers(today);
+  await ensureBirthdayDrafts(today);
   const stock = drafts.queued(today);
   let pick = null;
   let reason = '';
@@ -202,6 +272,12 @@ async function runDaily(channel, managerId, now = Date.now()) {
     console.log(`🗓️ 今日の投稿案：${pick ? pick.topic : 'なし'}（${reason}）`);
   } catch (err) {
     console.error('投稿案の判断エラー:', err.message);
+  }
+  // 日付の決まった文案は今日しか出せないので、同じ日に何本あっても全部届ける
+  const more = stock.filter(d => d.deadline === today && !drafts.hasUnchecked(d) && d.id !== pick?.id);
+  if (!pick && more.length) {
+    pick = more.shift();
+    reason = `今日（${today}）出す日が決まっている投稿です`;
   }
   const items = await collect(now);
   if (!pick && !items.length) return { delivered: null, reminded: 0 };
@@ -213,7 +289,8 @@ async function runDaily(channel, managerId, now = Date.now()) {
   await channel.send(`🔔 <@${managerId}> ${lines.join('\n')}`);
   bumpCounts(items.map(i => i.key));
   if (pick) await drafts.deliver(channel, pick);
-  return { delivered: pick, reminded: items.length };
+  for (const d of more) await drafts.deliver(channel, d);
+  return { delivered: pick, also: more, reminded: items.length };
 }
 
-module.exports = { runDaily, collect, judgeDelivery, eligibleStock, deliveryDue, weekProgress };
+module.exports = { runDaily, collect, judgeDelivery, eligibleStock, deliveryDue, weekProgress, ensureBirthdayDrafts, upcomingBirthdays, coversBirthday };

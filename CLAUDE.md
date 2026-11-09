@@ -103,6 +103,8 @@ NORTHEPTIONのX（Twitter）投稿を半自動化するDiscord Bot。
 - 起動：npm start
 - 構文の確認：`node --check <ファイル>`（index.js を require しない。ログインはしないが、毎分の処理が手元で動き出す）
 - 本番稼働：pm2 restart northeption-sns-bot（Oracle VM上で稼働中。プロセス名は`northeption-sns-bot`）
+- コードの直しは、VM（`ssh -i tokens/oracle_vm_key ubuntu@141.147.175.174`、`~/apps/northeption-sns-bot`）で `git pull` と再起動をし、ログで動いたことを確かめるまでが完了。GitHubに上げただけで「直した」と報告しない（くわしくは HISTORY.md の 2026-11-09）
+- VMのデータを直したら、直した後のデータを読んで確かめてから記録に書く
 
 ## Botの動き（2026-10-21改修。詳細は仕様書_auto_x-app.html）
 - 日付固定のカレンダーと確認待ちは廃止。毎週月曜 7時=数字レポートと見直し（今週の計画）、8時=計画の本数に足りない分の文案を在庫へ、9時=選手への質問案（オーナーの✅で各選手チャンネルへ送信）。毎日6時=投稿の数字と新規フォローの記録
