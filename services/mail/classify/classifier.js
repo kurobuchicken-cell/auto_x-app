@@ -132,7 +132,8 @@ ${emailList}
     const res = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
-      messages: [{ role: 'user', content: prompt }],
+      // 本文を文字数で切ると半分の絵文字が残り、APIが400で断るため
+      messages: [{ role: 'user', content: prompt.toWellFormed() }],
     });
 
     const text = res.content[0].text;

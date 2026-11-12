@@ -61,7 +61,8 @@ async function extractMaDeals(email) {
   const res = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 4000,
-    messages: [{ role: 'user', content: buildPrompt(email) }],
+    // 本文を文字数で切ると半分の絵文字が残り、APIが400で断るため
+    messages: [{ role: 'user', content: buildPrompt(email).toWellFormed() }],
   });
 
   const text = res.content[0].text;

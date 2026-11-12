@@ -63,7 +63,7 @@ async function collectPostMetrics(now = Date.now()) {
   const rows = (j.data || []).map(t => ({
     id: t.id,
     createdAt: t.created_at,
-    text: t.text.replace(/\s+/g, ' ').slice(0, 60),
+    text: [...t.text.replace(/\s+/g, ' ')].slice(0, 60).join(''),
     m: {
       at,
       imp: t.public_metrics.impression_count,
@@ -260,7 +260,7 @@ function weekCheck(prev, now = Date.now()) {
     `・計画 ${planned ?? '—'}本 → Botが届けた ${delivered}本 → 投稿 ${posted}本（講座を含む。ほかに大会の告知・結果報告 ${eventPosts}本）`,
     `・新規フォロー（実測）：合計 ${total}人（測れた日 ${measured.length}/7日）。投稿した日の平均 ${postAvg ?? '—'}人／投稿しなかった日の平均 ${avgFollows(quietDays) ?? '—'}人（基準：1日${BASELINE_FOLLOWS_PER_DAY}人）`,
     `・予想：投稿した日の平均 ${prev?.predictedFollows ?? '—'}人 → 判定：${verdict}`,
-    ...rows.map(r => `・${r.date} 新規フォロー ${r.follows ?? '測れず'}${r.posts.map(p => `\n　[${p.type}] ${p.text.slice(0, 30)}… 表示${p.m.imp} プロフィール${p.m.profile ?? '?'}`).join('')}`),
+    ...rows.map(r => `・${r.date} 新規フォロー ${r.follows ?? '測れず'}${r.posts.map(p => `\n　[${p.type}] ${[...p.text].slice(0, 30).join('')}… 表示${p.m.imp} プロフィール${p.m.profile ?? '?'}`).join('')}`),
   ];
   return { verdict, lines, planned, delivered, posted, postAvg };
 }
@@ -289,8 +289,19 @@ function typeLedger() {
 }
 
 // 週次レポートに入れる「投稿 → プロフィール → フォロー」の要約
+// 今週（月曜始まり）より前の最後の見直し。同じ週にやり直しても、先週の計画と比べるため
+function mondayOf(now) {
+  const today = todayJST(now);
+  const dow = (new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7;
+  return addDays(today, -dow);
+}
+function reviewBefore(now) {
+  const monday = mondayOf(now);
+  return (store.load('state').reviews || []).filter(r => !(r.weekStart >= monday)).slice(-1)[0] || null;
+}
+
 function funnelLines(now = Date.now()) {
-  const prev = (store.load('state').reviews || []).slice(-1)[0] || null;
+  const prev = reviewBefore(now);
   const threads = threadLines(now).slice(-4);
   return ['**先週の結果（投稿 → プロフィール → 新規フォロー）**', ...weekCheck(prev, now).lines, ...(threads.length ? ['', '**ツリーの投稿ごとの表示（直近4本）**', ...threads] : [])].join('\n');
 }
@@ -326,7 +337,10 @@ const REVIEW_SCHEMA = {
 };
 
 async function weeklyReview(now = Date.now()) {
-  const prev = (store.load('state').reviews || []).slice(-1)[0] || null;
+  // レポートのやり直しで、同じ週の計画を二重に作らない
+  const done = (store.load('state').reviews || []).find(r => r.weekStart >= mondayOf(now));
+  if (done) return done;
+  const prev = reviewBefore(now);
   const check = weekCheck(prev, now);
   const ledger = typeLedger();
   const courseN = require('./course').thisWeek(todayJST(now)).length;

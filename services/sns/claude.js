@@ -4,6 +4,10 @@ const { systemBlocks, todayJST } = require('./prompt');
 const MODEL = 'claude-opus-5-5';
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+// 文字数で切った文に半分の絵文字が残ると、APIが「JSONが壊れている」と400で断る（2026-11-09、毎週の見直しが3回とも失敗）
+const wellFormed = s => (typeof s === 'string' ? s.toWellFormed() : s);
+const safeSystem = () => systemBlocks(todayJST()).map(b => (b.text ? { ...b, text: wellFormed(b.text) } : b));
+
 // 安全判定で断られた場合に、API側で別モデルへ自動で切り替えて続けさせる
 async function call(userText, { effort = 'medium', schema = null, maxTokens = 16000 } = {}) {
   const output_config = { effort };
@@ -14,9 +18,9 @@ async function call(userText, { effort = 'medium', schema = null, maxTokens = 16
     max_tokens: maxTokens,
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
-    system: systemBlocks(todayJST()),
+    system: safeSystem(),
     output_config,
-    messages: [{ role: 'user', content: userText }],
+    messages: [{ role: 'user', content: wellFormed(userText) }],
   });
 
   if (res.stop_reason === 'refusal') throw new Error('Claudeが生成を断りました');
@@ -36,14 +40,14 @@ const WEB_TOOLS = [
 
 // ウェブ検索つき。サーバー側の検索ループが上限に達すると pause_turn で返るので、続きから再開させる
 async function researchJSON(userText, schema, { effort = 'medium', maxTokens = 16000 } = {}) {
-  const messages = [{ role: 'user', content: userText }];
+  const messages = [{ role: 'user', content: wellFormed(userText) }];
   for (let round = 1; round <= 4; round++) {
     const res = await anthropic.beta.messages.create({
       model: MODEL,
       max_tokens: maxTokens,
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
-      system: systemBlocks(todayJST()),
+      system: safeSystem(),
       output_config: { effort, format: { type: 'json_schema', schema } },
       tools: WEB_TOOLS,
       messages,

@@ -66,7 +66,7 @@ async function fetchSnapshot(now = Date.now()) {
       draftId: draft?.id ?? null,
       fullText: t.text,
       createdAt: t.created_at,
-      text: t.text.slice(0, 120),
+      text: [...t.text].slice(0, 120).join(''),
       impressions: t.public_metrics.impression_count ?? null,
       likes: t.public_metrics.like_count,
       reposts: t.public_metrics.retweet_count + (t.public_metrics.quote_count || 0),
@@ -96,7 +96,7 @@ function buildReport(snapshot, history) {
   lines.push('', `**この1週間の投稿（${thisWeek.length}件）**`);
   for (const p of thisWeek) {
     const d = new Date(Date.parse(p.createdAt) + 9 * 60 * 60 * 1000).toISOString().slice(5, 10).replace('-', '/');
-    lines.push(`・${d} [${p.type || '型不明'}] ${p.text.replace(/\s+/g, ' ').slice(0, 30)}…\n　表示 ${fmtNum(p.impressions)} / いいね ${fmtNum(p.likes)} / RT ${fmtNum(p.reposts)} / 返信 ${fmtNum(p.replies)}${p.pollVotes !== null && p.pollVotes !== undefined ? ` / 投票 ${fmtNum(p.pollVotes)}票` : ''}`);
+    lines.push(`・${d} [${p.type || '型不明'}] ${[...p.text.replace(/\s+/g, ' ')].slice(0, 30).join('')}…\n　表示 ${fmtNum(p.impressions)} / いいね ${fmtNum(p.likes)} / RT ${fmtNum(p.reposts)} / 返信 ${fmtNum(p.replies)}${p.pollVotes !== null && p.pollVotes !== undefined ? ` / 投票 ${fmtNum(p.pollVotes)}票` : ''}`);
   }
   if (thisWeek.length === 0) lines.push('なし');
 
@@ -114,7 +114,8 @@ function buildReport(snapshot, history) {
   const latest = new Map();
   for (const s of [...history.slice(-6), snapshot]) for (const p of s.posts) latest.set(p.id, p);
   const byType = Object.fromEntries([...TYPES, '型不明'].map(t => [t, []]));
-  for (const p of latest.values()) byType[p.type || '型不明'].push(p.impressions || 0);
+  // 種類は後から増える（2026-11-04の「講座」で集計が止まった）ので、知らない種類も数える
+  for (const p of latest.values()) (byType[p.type || '型不明'] ||= []).push(p.impressions || 0);
   lines.push('', '**型ごとの平均表示回数（最大6週）**');
   for (const [t, arr] of Object.entries(byType)) {
     if (arr.length) lines.push(`・${t}：${arr.length}件・平均 ${fmtNum(Math.round(arr.reduce((a, b) => a + b, 0) / arr.length))}`);
@@ -168,13 +169,10 @@ async function run(channel, managerId = null) {
   const growth = require('./growth');
   // 見直しで今週の計画が入る前に、先週の計画に対する結果を出す
   const funnel = growth.funnelLines();
-  let review = '';
-  try {
-    review = `\n\n${growth.reviewLines(await growth.weeklyReview())}`;
-  } catch (err) {
-    console.error('毎週の見直しエラー（レポートは続ける）:', err.message);
-  }
-  const text = `${managerId ? `<@${managerId}> ` : ''}${buildReport(snapshot, history)}\n\n${funnel}${review}`;
+  // 見直し（今週の計画）はPDCAの要なので、失敗したらレポートごと30分後にやり直し、3回失敗すればオーナーに知らせる
+  // （2026-11-09、見直しだけ失敗してもレポートは届く作りで、計画が作られないまま黙って止まった）
+  const review = `\n\n${growth.reviewLines(await growth.weeklyReview())}`;
+  const text = `${managerId ? `<@${managerId}> ` : ''}${buildReport(snapshot, history)}\n\n${funnel}${review}`.toWellFormed();
   markPosted(snapshot.posts);
   for (const p of snapshot.posts) delete p.fullText;
   store.update('metrics', m => { m.snapshots.push(snapshot); });
