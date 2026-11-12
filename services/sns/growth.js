@@ -58,9 +58,11 @@ async function fetchFollowers(key, now) {
 async function collectPostMetrics(now = Date.now()) {
   const me = await xauth.xUserGet('/users/me');
   const start = new Date(now - POST_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString().replace(/\.\d+Z$/, 'Z');
-  const j = await xauth.xUserGet(`/users/${me.data.id}/tweets?max_results=100&exclude=retweets,replies&start_time=${start}&tweet.fields=created_at,public_metrics,non_public_metrics`);
+  const j = await xauth.xUserGet(`/users/${me.data.id}/tweets?max_results=100&exclude=retweets,replies&start_time=${start}&tweet.fields=created_at,public_metrics,non_public_metrics,referenced_tweets`);
   const at = new Date(now).toISOString();
-  const rows = (j.data || []).map(t => ({
+  const top = require('./report').topLevel(j.data);
+  const threadReplies = (j.data || []).filter(t => !top.includes(t)).map(t => t.id);
+  const rows = top.map(t => ({
     id: t.id,
     createdAt: t.created_at,
     text: [...t.text.replace(/\s+/g, ' ')].slice(0, 60).join(''),
@@ -76,6 +78,8 @@ async function collectPostMetrics(now = Date.now()) {
   }));
   store.update('growth', d => {
     d.posts = d.posts || {};
+    // 以前に投稿として記録してしまったツリーの続きも消す（ツリーの投稿ごとの表示は threads に別に残る）
+    for (const id of threadReplies) delete d.posts[id];
     for (const r of rows) {
       const p = d.posts[r.id] || { createdAt: r.createdAt, text: r.text, history: [] };
       p.history = [...p.history.filter(h => h.at.slice(0, 10) !== at.slice(0, 10)), r.m];

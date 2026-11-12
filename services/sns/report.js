@@ -49,16 +49,19 @@ function guessType(text, draftItems) {
   return matchDraft(text, draftItems)?.type ?? null;
 }
 
+// exclude=replies でも、自分のツリーの2投稿目以降（自分への返信）は返ってくるので除く。1本のツリーを何本もの投稿と数えないため（2026-11-12）
+const topLevel = data => (data || []).filter(t => !(t.referenced_tweets || []).some(r => r.type === 'replied_to'));
+
 async function fetchSnapshot(now = Date.now()) {
   const user = await xGet(`/users/by/username/${USERNAME}?user.fields=public_metrics`);
   const userId = user.data.id;
   const startTime = new Date(now - 14 * 24 * 60 * 60 * 1000).toISOString();
   const tl = await xGet(
-    `/users/${userId}/tweets?max_results=20&exclude=retweets,replies&tweet.fields=created_at,public_metrics,attachments&expansions=attachments.poll_ids&poll.fields=options&start_time=${startTime}`
+    `/users/${userId}/tweets?max_results=20&exclude=retweets,replies&tweet.fields=created_at,public_metrics,attachments,referenced_tweets&expansions=attachments.poll_ids&poll.fields=options&start_time=${startTime}`
   );
   const draftItems = store.load('drafts').items;
   const polls = Object.fromEntries((tl.includes?.polls || []).map(pl => [pl.id, pl.options.reduce((a, o) => a + (o.votes || 0), 0)]));
-  const posts = (tl.data || []).map(t => {
+  const posts = topLevel(tl.data).map(t => {
     const draft = matchDraft(t.text, draftItems);
     const pollId = t.attachments?.poll_ids?.[0];
     return {
@@ -151,9 +154,9 @@ async function checkRecentPosts(days = 3, now = Date.now()) {
   if (!process.env.X_BEARER_TOKEN) return false;
   const userId = await getUserId();
   const startTime = new Date(now - days * 24 * 60 * 60 * 1000).toISOString();
-  const tl = await xGet(`/users/${userId}/tweets?max_results=10&exclude=retweets,replies&tweet.fields=created_at&start_time=${startTime}`);
+  const tl = await xGet(`/users/${userId}/tweets?max_results=10&exclude=retweets,replies&tweet.fields=created_at,referenced_tweets&start_time=${startTime}`);
   const draftItems = store.load('drafts').items;
-  markPosted((tl.data || []).map(t => ({ id: t.id, createdAt: t.created_at, fullText: t.text, draftId: matchDraft(t.text, draftItems)?.id ?? null })));
+  markPosted(topLevel(tl.data).map(t => ({ id: t.id, createdAt: t.created_at, fullText: t.text, draftId: matchDraft(t.text, draftItems)?.id ?? null })));
   return true;
 }
 
@@ -185,4 +188,4 @@ async function run(channel, managerId = null) {
   if (chunk) await channel.send(chunk);
 }
 
-module.exports = { run, buildReport, guessType, matchDraft, similarity, fetchSnapshot, checkRecentPosts, getUserId, xGet };
+module.exports = { topLevel, run, buildReport, guessType, matchDraft, similarity, fetchSnapshot, checkRecentPosts, getUserId, xGet };
