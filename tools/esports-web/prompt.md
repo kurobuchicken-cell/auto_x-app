@@ -4,7 +4,11 @@
 
 ## 始める前
 - `node C:\dev\auto_x-app\tools\esports-web\send.js status` が「済」なら、今週は送り終えているので何もしない（5時間枠のリセット後に再開した夜など）
-- 「未」なら、C:\dev\sugoi-shorts\work\usage.json の fiveHourPct と sevenDayPct を、開始前の使用率として控える
+- 「未」なら、C:\dev\sugoi-shorts\work\usage.json の fiveHourPct と sevenDayPct を、開始前の使用率として控え、開始の時刻（ISO形式）も控える。`npm run lap -- esports-web start` を打つ（sugoi-shorts のフォルダで。時間と使用率の記録）
+
+## 記録する（オーナー指示。検索の量に対して、時間とトークンがどれだけかかったかを毎週残す）
+- 作業係の組（都道府県・政令市／市町村を見つける／掘る／確かめ直し）が終わるたびに `npm run lap -- esports-web <組の名前> --tokens <その組の作業係のトークンの合計> --role <組の名前> --model sonnet --agents <人数> --uses <その組の検索・ページ取得の回数>` を打つ。作業係のトークンは、作業係が終わったときの知らせ（subagent_tokens）を足す
+- 親（このセッション）が自分で行った検索・確かめ直しは、`--role 親` で同じように打つ（トークンは分からなければ付けない）
 - `node C:\dev\auto_x-app\tools\esports-web\send.js seen` で、前の週までに送った案件のURLを控える（今週は送らない）
 
 ## 探すもの
@@ -19,14 +23,15 @@ skill「research-rule」の深さ「徹底」と、skill「exhaustive-search」�
 5. 決まった題材の毎週の探索なので、exhaustive-search の「例」への追記はしない。Perplexity だけが取れた案件など、取りこぼしに気づいたら、research-rule の7番どおり review-log.md に1行書く
 
 ## 送る
-1. C:\dev\sugoi-shorts\work\usage.json の使用率を、終えた後の使用率として控える
+1. C:\dev\sugoi-shorts\work\usage.json の使用率を、終えた後の使用率として控え、終えた時刻も控える。`npm run lap -- esports-web end` を打つ
 2. 結果を C:\dev\auto_x-app\tools\esports-web\work\result-<今週の金曜の日付>.json に書く：
 ```json
 {
   "items": [{ "org": "発注元", "title": "件名", "issueDate": "YYYY-MM-DD か 不明", "deadline": "YYYY-MM-DD か 不明", "budget": "上限◯万円（税込） か 記載なし", "summary": "何を委託する業務か（80字以内）", "url": "確かめた元のページ" }],
   "unconfirmed": [{ "org": "発注元", "title": "件名", "url": "見つけたURL", "reason": "確かめきれなかった理由" }],
-  "stats": { "searches": 0, "perplexityCalls": 0, "pagesChecked": 0, "workers": 4 },
-  "usage": { "before5h": 0, "after5h": 0, "before7d": 0, "after7d": 0 }
+  "stats": { "searches": 0, "perplexityCalls": 0, "pagesChecked": 0, "workers": 4, "workerTokens": 0 },
+  "usage": { "before5h": 0, "after5h": 0, "before7d": 0, "after7d": 0 },
+  "time": { "startedAt": "開始の時刻（ISO）", "endedAt": "終えた時刻（ISO）" }
 }
 ```
 3. `node C:\dev\auto_x-app\tools\esports-web\send.js result <そのファイル>` で Slack に送る（0件でも送る。前の週までに送ったものは自動で外れる）

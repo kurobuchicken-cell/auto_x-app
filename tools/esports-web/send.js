@@ -44,6 +44,27 @@ function link(url, text) {
   return url ? `<${url}|${esc(text)}>` : esc(text);
 }
 
+// 検索の量に対して時間とトークンがどれだけかかったかを毎週残す（2026-11-13オーナー指示）
+function cost(r) {
+  const s = r.stats || {};
+  const u = r.usage || {};
+  const t = r.time || {};
+  const ms = Date.parse(t.endedAt) - Date.parse(t.startedAt);
+  const delta = (a, b) => (a != null && b != null && b >= a ? b - a : null);
+  return {
+    startedAt: t.startedAt ?? null,
+    endedAt: t.endedAt ?? null,
+    minutes: Number.isFinite(ms) && ms >= 0 ? Math.round(ms / 60000) : null,
+    searches: s.searches ?? null,
+    perplexityCalls: s.perplexityCalls ?? 0,
+    pagesChecked: s.pagesChecked ?? null,
+    workers: s.workers ?? null,
+    workerTokens: s.workerTokens ?? null,
+    fiveHourDelta: delta(u.before5h, u.after5h),
+    sevenDayDelta: delta(u.before7d, u.after7d),
+  };
+}
+
 function buildResultMessage(r, fresh, mention) {
   const s = r.stats || {};
   const u = r.usage || {};
@@ -63,8 +84,12 @@ function buildResultMessage(r, fresh, mention) {
     lines.push('', `*元のページで確かめきれなかった候補（参考・${unconfirmed.length}件）*`);
     for (const i of unconfirmed) lines.push(`• ${link(i.url, i.title)}（${esc(i.org)}）${i.reason ? `：${esc(i.reason)}` : ''}`);
   }
-  const usage = u.before5h != null && u.after5h != null ? `／5時間枠 ${u.before5h}%→${u.after5h}%・7日枠 ${u.before7d ?? '?'}%→${u.after7d ?? '?'}%` : '';
-  lines.push('', `確認したページ${s.pagesChecked ?? '?'}件・検索${s.searches ?? '?'}回（うちPerplexity ${s.perplexityCalls ?? 0}回）${usage}。公開から日が浅いページは検索の索引に入っておらず、拾えないことがあります。`);
+  const c = cost(r);
+  const parts = [`確認したページ${s.pagesChecked ?? '?'}件・検索${s.searches ?? '?'}回（うちPerplexity ${s.perplexityCalls ?? 0}回）`];
+  if (c.minutes != null) parts.push(`${c.minutes}分`);
+  if (s.workerTokens) parts.push(`作業係${s.workers ?? '?'}人で${Number(s.workerTokens).toLocaleString()}トークン`);
+  if (u.before5h != null && u.after5h != null) parts.push(`5時間枠 ${u.before5h}%→${u.after5h}%${c.fiveHourDelta == null ? '（枠のリセットをまたいだ）' : ''}・7日枠 ${u.before7d ?? '?'}%→${u.after7d ?? '?'}%`);
+  lines.push('', `${parts.join('／')}。公開から日が浅いページは検索の索引に入っておらず、拾えないことがあります。`);
   return lines.join('\n');
 }
 
@@ -92,6 +117,7 @@ async function main() {
     for (const i of fresh) state.notified[i.url] = key;
     state.sentWeeks[key] = 'result';
     saveState(state);
+    fs.appendFileSync(path.join(WORK, 'history.jsonl'), JSON.stringify({ week: key, ...cost(r), newItems: fresh.length, unconfirmed: (r.unconfirmed || []).length }) + '\n');
     console.log(`送りました（新しい公募${fresh.length}件）`);
     return;
   }
