@@ -357,7 +357,9 @@ function releaseAnswers(ids) {
 }
 
 async function deliver(channel, item) {
-  const patterns = item.queuedPatterns || item.patterns.map((text, i) => ({ label: `パターン${i + 1}`, text, note: '' }));
+  // 2026-11-05より前に作った在庫は読点で改行しているので、届けるときにもそろえる
+  const patterns = (item.queuedPatterns || item.patterns.map((text, i) => ({ label: `パターン${i + 1}`, text, note: '' })))
+    .map(p => ({ ...p, text: fixLineBreaks(p.text), ...(p.thread ? { thread: p.thread.map(fixLineBreaks) } : {}), ...(p.followUp ? { followUp: fixLineBreaks(p.followUp) } : {}) }));
   const msg = await sendPatterns(channel, item.header, patterns);
   store.update('drafts', d => {
     const x = d.items.find(y => y.id === item.id);
