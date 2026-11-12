@@ -1,6 +1,7 @@
 'use strict';
 
 const cheerio = require('cheerio');
+const Anthropic = require('@anthropic-ai/sdk');
 const { sendToSlack } = require('../notify/slack');
 const { loadKkjState, saveKkjState, saveRunLog } = require('../logger/logger');
 
@@ -11,6 +12,8 @@ const LOOKBACK_DAYS = 60;
 const FIRST_RUN_NOTIFY_DAYS = 14;
 const RETRY_INTERVAL_MS = 60 * 60 * 1000;
 const ALERT_AFTER_FAIL_DAYS = 3;
+const MODEL = 'claude-opus-5-5';
+const MAX_DESCRIPTION_CHARS = 100000;
 
 let running = false;
 let lastAttemptAt = 0;
@@ -39,9 +42,67 @@ async function fetchItems(now = Date.now()) {
       city: get('CityName'),
       issueDate: get('CftIssueDate').slice(0, 10),
       deadline: get('TenderSubmissionDeadline').slice(0, 10),
+      description: get('ProjectDescription'),
       inTitle: TITLE_WORDS.some(w => norm(title).includes(norm(w))),
     };
   }).get().filter(i => i.key);
+}
+
+const SUMMARY_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: { type: 'string' },
+    budget: { type: 'string' },
+    deadline: { type: 'string' },
+    period: { type: 'string' },
+  },
+  required: ['summary', 'budget', 'deadline', 'period'],
+  additionalProperties: false,
+};
+
+async function summarize(item) {
+  if (!item.description) return null;
+  const truncated = item.description.length > MAX_DESCRIPTION_CHARS;
+  const text = (truncated ? item.description.slice(0, MAX_DESCRIPTION_CHARS) : item.description).toWellFormed();
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const res = await anthropic.beta.messages.create({
+    model: MODEL,
+    max_tokens: 4000,
+    betas: ['server-side-fallback-2026-07-01'],
+    fallbacks: 'default',
+    output_config: { effort: 'low', format: { type: 'json_schema', schema: SUMMARY_SCHEMA } },
+    messages: [{
+      role: 'user',
+      content: `次は官公庁・自治体の公募（入札・プロポーザル）の公告文です。eスポーツ事業の会社が、応募を検討するかを数秒で決められるよう、ごく短くまとめてください。
+- summary: 何を委託・調達する業務か。1〜2文、80字以内。eスポーツとの関わりが本文の一部だけなら、そう書く
+- budget: 予算の上限額（例「上限330万円（税込）」）
+- deadline: 企画提案書・入札書の提出期限（例「12月5日 17時」）
+- period: 契約・履行の期間
+本文に書かれていないことは推測せず「記載なし」と書く。${truncated ? '本文は長いため先頭だけを渡しています。' : ''}
+
+件名：${item.title}
+機関：${item.org}
+
+公告文：
+${text}`,
+    }],
+  }, { timeout: 5 * 60 * 1000 });
+  if (res.stop_reason === 'refusal') throw new Error('Claudeが要約を断りました');
+  const out = res.content.filter(b => b.type === 'text').map(b => b.text).join('');
+  if (!out) throw new Error(`要約が空でした（stop_reason=${res.stop_reason}）`);
+  return JSON.parse(out);
+}
+
+// 要約が失敗しても通知は止めない（案件を落とさないことを優先する）
+async function addSummaries(items, summarizer = summarize) {
+  for (const i of items) {
+    try {
+      i.summary = await summarizer(i);
+    } catch (err) {
+      console.error(`[KKJ] 要約エラー（${i.title}）:`, err.message);
+      i.summary = null;
+    }
+  }
 }
 
 function escapeSlack(text) {
@@ -66,7 +127,7 @@ function buildMessage(items, mentionUserId) {
 }
 
 // 失敗しても当日中は1時間ごとにやり直し、3日続けて失敗したらSlackで知らせる（黙って止まらないため）
-async function runKkjCheck({ now = Date.now(), send = sendToSlack } = {}) {
+async function runKkjCheck({ now = Date.now(), send = sendToSlack, summarizer = summarize } = {}) {
   if (running || now - lastAttemptAt < RETRY_INTERVAL_MS) return;
   const state = loadKkjState();
   const today = jstDate(now);
@@ -83,6 +144,7 @@ async function runKkjCheck({ now = Date.now(), send = sendToSlack } = {}) {
     const fresh = items.filter(i => !seen[i.key] && (!isFirstRun || i.issueDate >= recentFrom));
     console.log(`[KKJ] 取得: ${items.length}件 / 新着: ${fresh.length}件${isFirstRun ? '（初回のため直近14日分だけ通知）' : ''}`);
     if (fresh.length) {
+      await addSummaries(fresh, summarizer);
       await send(process.env.SLACK_WEBHOOK_URL, buildMessage(fresh, process.env.SLACK_MENTION_USER_ID));
       runLog.notified = fresh.length;
       console.log('[KKJ] Slack送信完了');
@@ -110,4 +172,4 @@ async function runKkjCheck({ now = Date.now(), send = sendToSlack } = {}) {
   }
 }
 
-module.exports = { runKkjCheck, buildMessage, fetchItems };
+module.exports = { runKkjCheck, buildMessage, fetchItems, summarize };
