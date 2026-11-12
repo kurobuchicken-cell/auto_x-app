@@ -11,7 +11,6 @@ const TITLE_WORDS = ['eスポーツ', 'esports', 'e-sports', 'イースポーツ
 const LOOKBACK_DAYS = 60;
 const FIRST_RUN_NOTIFY_DAYS = 14;
 const RETRY_INTERVAL_MS = 60 * 60 * 1000;
-const ALERT_AFTER_FAIL_DAYS = 3;
 const MODEL = 'claude-opus-5-5';
 const MAX_DESCRIPTION_CHARS = 100000;
 
@@ -126,7 +125,7 @@ function buildMessage(items, mentionUserId) {
   return lines.join('\n');
 }
 
-// 失敗しても当日中は1時間ごとにやり直し、3日続けて失敗したらSlackで知らせる（黙って止まらないため）
+// 失敗しても当日中は1時間ごとにやり直し、失敗のたびにSlackで知らせる（黙って止まらないため）
 async function runKkjCheck({ now = Date.now(), send = sendToSlack, summarizer = summarize } = {}) {
   if (running || now - lastAttemptAt < RETRY_INTERVAL_MS) return;
   const state = loadKkjState();
@@ -148,24 +147,24 @@ async function runKkjCheck({ now = Date.now(), send = sendToSlack, summarizer = 
       await send(process.env.SLACK_WEBHOOK_URL, buildMessage(fresh, process.env.SLACK_MENTION_USER_ID));
       runLog.notified = fresh.length;
       console.log('[KKJ] Slack送信完了');
+    } else {
+      // 何も届かないと「案件なし」と「止まっている」の見分けがつかないため、無い日も毎日送る
+      await send(process.env.SLACK_WEBHOOK_URL, `🎮 官公需のeスポーツ案件：本日の新着はありません（直近${LOOKBACK_DAYS}日の公告${items.length}件はすべて通知済み）`);
     }
     const stamp = new Date(now).toISOString();
     for (const i of items) if (!seen[i.key]) seen[i.key] = stamp;
-    saveKkjState({ seen, lastSuccessDate: today, failDates: [], alerted: false });
+    saveKkjState({ seen, lastSuccessDate: today, failDates: [] });
   } catch (err) {
     console.error('[KKJ] チェックエラー:', err);
     runLog.error = err.message;
     const failDates = [...new Set([...(state.failDates || []), today])].slice(-10);
-    let alerted = !!state.alerted;
-    if (failDates.length >= ALERT_AFTER_FAIL_DAYS && !alerted) {
-      try {
-        await send(process.env.SLACK_WEBHOOK_URL, `⚠️ 官公需のeスポーツ案件チェックが${failDates.length}日続けて失敗しています（最後のエラー：${escapeSlack(err.message)}）。直るまで新着を知らせられません。`);
-        alerted = true;
-      } catch (e) {
-        console.error('[KKJ] 失敗の通知も送れませんでした:', e.message);
-      }
+    const streak = failDates.length >= 2 ? `（${failDates.length}日続けて失敗中）` : '';
+    try {
+      await send(process.env.SLACK_WEBHOOK_URL, `⚠️ 官公需のeスポーツ案件チェックに失敗しました${streak}。1時間後にやり直します。エラー：${escapeSlack(err.message)}`);
+    } catch (e) {
+      console.error('[KKJ] 失敗の通知も送れませんでした:', e.message);
     }
-    saveKkjState({ ...state, failDates, alerted });
+    saveKkjState({ ...state, failDates });
   } finally {
     running = false;
     saveRunLog(runLog);

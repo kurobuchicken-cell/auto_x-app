@@ -7,3 +7,5 @@ node_modules/
 /data/
 
 .claude/settings.local.json
+/tools/esports-web/work/
+/tools/esports-web/watchdog.log
