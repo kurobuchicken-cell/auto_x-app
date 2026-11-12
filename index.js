@@ -2,6 +2,7 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const { runMailCheck } = require('./services/mail/run');
 const { runMacpCheck } = require('./services/mail/macp/run');
+const { runKkjCheck } = require('./services/mail/kkj/run');
 const store = require('./services/sns/store');
 const facts = require('./services/sns/facts');
 const drafts = require('./services/sns/drafts');
@@ -183,6 +184,8 @@ setInterval(async () => {
     lastMacpCheckDate = today;
     await runMacpCheck().catch(err => console.error('MACP案件チェックエラー:', err));
   }
+
+  if (h >= 9) await runKkjCheck().catch(err => console.error('官公需の案件チェックエラー:', err));
 }, 60 * 1000);
 
 // ── sns-bot への書き込み ─────────────────────────────────────

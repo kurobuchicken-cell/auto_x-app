@@ -9,6 +9,7 @@ const LOG_DIR = process.env.LOG_DIR ||
 const SENT_IDS_FILE = path.join(LOG_DIR, 'sent_ids.json');
 const RUN_LOG_FILE = path.join(LOG_DIR, 'run_log.json');
 const MACP_SEEN_IDS_FILE = path.join(LOG_DIR, 'macp_seen_ids.json');
+const KKJ_STATE_FILE = path.join(LOG_DIR, 'kkj_state.json');
 const RETENTION_DAYS = 90;
 
 function ensureLogDir() {
@@ -57,6 +58,21 @@ function loadMacpSeenIds() {
 function saveMacpSeenIds(seenIds) {
   ensureLogDir();
   fs.writeFileSync(MACP_SEEN_IDS_FILE, JSON.stringify(seenIds, null, 2));
+}
+
+// 官公需の案件チェックの状態。seen が無ければ初回とみなす（案件は90日で失効させない）
+function loadKkjState() {
+  ensureLogDir();
+  try {
+    return JSON.parse(fs.readFileSync(KKJ_STATE_FILE, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function saveKkjState(state) {
+  ensureLogDir();
+  fs.writeFileSync(KKJ_STATE_FILE, JSON.stringify(state, null, 2));
 }
 
 function saveClassificationLog(dateStr, results) {
@@ -143,4 +159,6 @@ module.exports = {
   acquireRunLock,
   loadMacpSeenIds,
   saveMacpSeenIds,
+  loadKkjState,
+  saveKkjState,
 };
