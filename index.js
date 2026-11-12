@@ -40,7 +40,7 @@ const HELP_TEXT = `📖 **使い方**（投稿の材料を書くと、いちば�
 ・まだ出せない情報は「未公開：〜」と書く → 解禁前として扱い、検索にも週の文案にも使いません
 ・「今週の文案」→ 今週の文案を今すぐ作って在庫に入れる
 ・「質問案」→ 選手への質問案を今すぐ作る
-・「レポート」→ Xの数字レポートを今すぐ出す
+・「レポート」→ Xの数字レポートを今すぐ出す（「レポート詳しく」で前回の全文）
 ・「記録」→ 記録した情報の一覧（🔒は未公開）
 ・「解禁 12」→ #12 を公開扱いにする
 ・「削除 12」→ #12 の記録を消す
@@ -203,6 +203,10 @@ async function handleCommand(message, text) {
     await message.react('❓');
     await questions.propose(ch, MANAGER_ID);
     store.update('state', s => { s.lastRun.questions = weekKey(); });
+    return true;
+  }
+  if (/^レポート\s*詳しく$/.test(text)) {
+    await report.sendFull(ch);
     return true;
   }
   if (/^レポート$/.test(text)) {

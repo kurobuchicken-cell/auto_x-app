@@ -266,7 +266,7 @@ function weekCheck(prev, now = Date.now()) {
     `・予想：投稿した日の平均 ${prev?.predictedFollows ?? '—'}人 → 判定：${verdict}`,
     ...rows.map(r => `・${r.date} 新規フォロー ${r.follows ?? '測れず'}${r.posts.map(p => `\n　[${p.type}] ${[...p.text].slice(0, 30).join('')}… 表示${p.m.imp} プロフィール${p.m.profile ?? '?'}`).join('')}`),
   ];
-  return { verdict, lines, planned, delivered, posted, postAvg };
+  return { verdict, lines, planned, delivered, posted, postAvg, total, measuredDays: measured.length, predicted: prev?.predictedFollows ?? null };
 }
 
 // 投稿の種類ごとの成績（これまでの記録すべて）。同じ日にほかの投稿があると、どれが効いたか分けられないので
@@ -302,6 +302,10 @@ function mondayOf(now) {
 function reviewBefore(now) {
   const monday = mondayOf(now);
   return (store.load('state').reviews || []).filter(r => !(r.weekStart >= monday)).slice(-1)[0] || null;
+}
+
+function weekSummary(now = Date.now()) {
+  return weekCheck(reviewBefore(now), now);
 }
 
 function funnelLines(now = Date.now()) {
@@ -422,4 +426,4 @@ function currentPolicy() {
   return `今週の方針：${r.policy}\n今週の仮説：${r.hypothesis}\n今週の計画：在庫から${plan.posts}本${plan.types.length ? `（${plan.types.map(t => `${t.type}${t.count}本`).join('・')}）` : ''}`;
 }
 
-module.exports = { collectThreadMetrics, threadLines, snapshotFollowers, collectPostMetrics, trackFollows, runDaily, funnelLines, slotKey, weeklyReview, weekCheck, typeLedger, dayRows, reviewLines, currentPolicy, currentPlan, BASELINE_FOLLOWS_PER_DAY };
+module.exports = { weekSummary, collectThreadMetrics, threadLines, snapshotFollowers, collectPostMetrics, trackFollows, runDaily, funnelLines, slotKey, weeklyReview, weekCheck, typeLedger, dayRows, reviewLines, currentPolicy, currentPlan, BASELINE_FOLLOWS_PER_DAY };

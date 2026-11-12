@@ -174,18 +174,45 @@ async function run(channel, managerId = null) {
   const funnel = growth.funnelLines();
   // 見直し（今週の計画）はPDCAの要なので、失敗したらレポートごと30分後にやり直し、3回失敗すればオーナーに知らせる
   // （2026-11-09、見直しだけ失敗してもレポートは届く作りで、計画が作られないまま黙って止まった）
-  const review = `\n\n${growth.reviewLines(await growth.weeklyReview())}`;
-  const text = `${managerId ? `<@${managerId}> ` : ''}${buildReport(snapshot, history)}\n\n${funnel}${review}`.toWellFormed();
+  const week = growth.weekSummary();
+  const review = await growth.weeklyReview();
+  const full = `${buildReport(snapshot, history)}\n\n${funnel}\n\n${growth.reviewLines(review)}`.toWellFormed();
+  const pending = await require('./reminders').collect(Date.now()).then(x => x.length).catch(() => null);
+  const text = `${managerId ? `<@${managerId}> ` : ''}${shortReport(snapshot, history[history.length - 1], week, review, pending)}`.toWellFormed();
   markPosted(snapshot.posts);
   for (const p of snapshot.posts) delete p.fullText;
   store.update('metrics', m => { m.snapshots.push(snapshot); });
-  // 文の途中で切れないよう、行の区切りで分けて送る
-  let chunk = '';
-  for (const line of text.split('\n')) {
-    if (chunk && chunk.length + line.length + 1 > 1900) { await channel.send(chunk); chunk = ''; }
+  store.update('state', s => { s.lastFullReport = { at: new Date().toISOString(), text: full }; });
+  await channel.send(text);
+}
+
+// オーナーに届けるのは結果・今週やること・対応だけ。数字を見て次を決めるのはBotなので、全文は求められたときに出す（2026-11-12オーナー「だらだら文書かれても読まない」）
+function shortReport(snapshot, prev, week, review, pending) {
+  const d = snapshot.date.slice(5).replace('-', '/').replace(/^0/, '');
+  const perDay = week.measuredDays ? (week.total / week.measuredDays).toFixed(1) : '—';
+  const firstSentence = s => ((s || '').match(/^[^。]*/) || [''])[0];
+  return [
+    `📊 **週次レポート（${d}）**`,
+    `・フォロワー ${fmtNum(snapshot.followers)}（先週比 ${prev ? signed(snapshot.followers - prev.followers) : '—'}）`,
+    `・先週：投稿${week.posted}本／新規フォロー${week.total}人（1日${perDay}人、基準${require('./growth').BASELINE_FOLLOWS_PER_DAY}人）`,
+    `・予想 ${week.predicted ?? '—'}人 → 実際 ${week.postAvg ?? '—'}人：${week.verdict}`,
+    `・今週：${review.planPosts}本${review.planTypes.length ? `（${review.planTypes.map(t => `${t.type}${t.count}`).join('・')}）` : ''}`,
+    `・変えること：${firstSentence(review.decision)}`,
+    `・オーナーの対応：${pending == null ? '18時の通知で確かめてください' : pending ? `${pending}件（18時の通知でお知らせします）` : 'なし'}`,
+    '（詳しく見たいときは「レポート詳しく」と書けば全部出します）',
+  ].join('\n');
+}
+
+// 「レポート詳しく」：最後の週次レポートの全文を、行の区切りで分けて返す
+async function sendFull(channel) {
+  const r = store.load('state').lastFullReport;
+  if (!r) return channel.send('まだ週次レポートがありません。');
+  let chunk = `（${r.at.slice(0, 10)}の週次レポートの全文）`;
+  for (const line of r.text.split('\n')) {
+    if (chunk.length + line.length + 1 > 1900) { await channel.send(chunk); chunk = ''; }
     chunk = chunk ? `${chunk}\n${line}` : line;
   }
   if (chunk) await channel.send(chunk);
 }
 
-module.exports = { topLevel, run, buildReport, guessType, matchDraft, similarity, fetchSnapshot, checkRecentPosts, getUserId, xGet };
+module.exports = { shortReport, sendFull, topLevel, run, buildReport, guessType, matchDraft, similarity, fetchSnapshot, checkRecentPosts, getUserId, xGet };
