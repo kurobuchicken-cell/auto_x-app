@@ -390,6 +390,7 @@
 <h2>12. 運用</h2>
 <ul>
   <li>本番：Oracle VM（<code>~/apps/northeption-sns-bot</code>）、<code>git pull</code> → <code>npm ci --omit=dev</code> → <code>pm2 restart northeption-sns-bot</code>。</li>
+  <li>VMへの接続：<code>ssh -i tokens/oracle_vm_key ubuntu@141.147.175.174</code>。初めてつなぐPCで出る指紋は <code>SHA256:rFv4IivHcMtSY5JJum3tBqG925d6M7kWXR54Q9PlAzc</code>（ED25519）。違えば yes を押さずに止める。鍵が本人以外にも読める状態だと ssh が鍵を使わないため、権限は dev-config の sync-pull.ps1 が揃える。</li>
   <li>オーナーの初回作業：X開発者アカウントの登録とクレジットのチャージ、Botを選手チャンネル4つに参加させる。</li>
 </ul>
 </body>
