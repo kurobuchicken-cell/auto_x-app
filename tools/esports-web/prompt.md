@@ -4,6 +4,7 @@
 
 ## 始める前
 - `node C:\dev\auto_x-app\tools\esports-web\send.js status` が「済」なら、今週は送り終えているので何もしない（5時間枠のリセット後に再開した夜など）
+- `node C:\dev\auto_x-app\tools\esports-web\send.js check` で送り先を点検する。失敗したら（送り先が無いことは harvest-engine の Slack に自動で知らされる）、探索はそのまま行い、結果のファイルまで書く。朝の報告に「・大事: 公募の探索の送り先（auto_x-app の .env の SLACK_WEBHOOK_URL）が無く、結果を送れていない」の1行を足す
 - 「未」なら、C:\dev\sugoi-shorts\work\usage.json の fiveHourPct と sevenDayPct を、開始前の使用率として控え、開始の時刻（ISO形式）も控える。`npm run lap -- esports-web start` を打つ（sugoi-shorts のフォルダで。時間と使用率の記録）
 
 ## 記録する（オーナー指示。検索の量に対して、時間とトークンがどれだけかかったかを毎週残す）
@@ -36,4 +37,4 @@ skill「research-rule」の深さ「徹底」と、skill「exhaustive-search」�
 ```
 3. `node C:\dev\auto_x-app\tools\esports-web\send.js result <そのファイル>` で Slack に送る（0件でも送る。前の週までに送ったものは自動で外れる）
 4. 探索が続けられない失敗（WebSearch が使えない等）のときは、`node C:\dev\auto_x-app\tools\esports-web\send.js fail "<理由>"` を流してから、夜間作業の次の作業へ進む
-5. 夜間作業のレポート（work/autorun-report.md）の「## 朝の報告」に「・公募: 自治体のeスポーツ ◯件（Slackに送信済み）」の1行を足す
+5. 夜間作業のレポート（work/autorun-report.md）の「## 朝の報告」に「・公募: 自治体のeスポーツ ◯件（Slackに送信済み）」の1行を足す。send.js が失敗した（終了コードが0でない）ときは「・大事: 公募の探索の結果を Slack に送れなかった（<エラー文>）」と書く。送れていないのに「送信済み」と書かない

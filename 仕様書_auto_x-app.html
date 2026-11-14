@@ -255,8 +255,9 @@
 <tr><td>前の週に送った案件がまた見つかる</td><td>送らない</td><td class="ok">確認済み（模擬）</td></tr>
 <tr><td>探索が続けられない</td><td>send.js fail で失敗を送る</td><td class="ok">確認済み（模擬）</td></tr>
 <tr><td>土曜9時までに何も送られない（夜間作業が止まった・PCが起きなかった）</td><td>土曜9:05の見張りが「終わりませんでした」を送る。送り済みの週は何もしない</td><td class="ok">確認済み（模擬）</td></tr>
-<tr><td>Slackの送り先が .env に無い</td><td>エラーで止まり、送り済みにしない</td><td class="ok">確認済み（模擬）</td></tr>
+<tr><td>Slackの送り先が .env に無い・送信が失敗する</td><td>エラーで止まり、送り済みにしない。代わりに harvest-engine の Slack（夜間作業の朝の報告と同じ送り先）へ「送れない」を知らせる。夜間作業は探索の前に <code>send.js check</code> で点検し、送れなければ朝の報告に「大事」として書く</td><td class="ok">確認済み（模擬。2026-11-14）</td></tr>
 </table>
+<p>送り先：このPCの auto_x-app の .env の <code>SLACK_WEBHOOK_URL</code>・<code>SLACK_MENTION_USER_ID</code>（本番VMの .env と同じ値）。dev-config の envs/auto_x-app で .env ごと同期する。2026-11-14、このPCの .env にキーが無く（VMの .env にしか無かった）、11/13の結果も11/14の見張りも送れなかった（くわしくは HISTORY.md の 2026-11-14）。</p>
 <p>2026-11-13に、送るスクリプトの全部の道を、時刻と状態を変えて手元で確かめた（Slackへの送信だけ差し替え）。探索そのものは初回（2026-11-13の夜）に実際に動いた後、ログで確かめて書き足す。</p>
 
 <h2>6-4. 大会の告知・結果報告の型</h2>

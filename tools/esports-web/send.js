@@ -6,6 +6,8 @@
 //   node send.js result <file>   結果のJSONを送る（0件の週も送る）
 //   node send.js fail <理由>     失敗を送る
 //   node send.js watchdog        土曜9:05の見張り。今週の結果も失敗も送っていなければ失敗を送る
+//   node send.js check           送り先（.env の SLACK_WEBHOOK_URL）があるかの点検。探索を始める前に流す
+// 送り先が無い・送れないときは、夜間作業の朝の報告と同じ harvest-engine の Slack に「送れない」を知らせる（黙って止まらないため。2026-11-14）
 const fs = require('fs');
 const path = require('path');
 const ROOT = path.resolve(__dirname, '..', '..');
@@ -108,6 +110,10 @@ async function main() {
     return;
   }
   if (!webhook) throw new Error('SLACK_WEBHOOK_URL が auto_x-app の .env にありません');
+  if (cmd === 'check') {
+    console.log('OK（送り先あり）');
+    return;
+  }
 
   if (cmd === 'result') {
     if (!arg) throw new Error('結果のファイルを指定してください');
@@ -139,10 +145,22 @@ async function main() {
     console.log('未完了を送りました');
     return;
   }
-  throw new Error(`使い方: node send.js status|seen|result <file>|fail <理由>|watchdog`);
+  throw new Error(`使い方: node send.js status|seen|result <file>|fail <理由>|watchdog|check`);
 }
 
-main().catch(err => {
+async function alertFallback(cmd, err) {
+  const file = process.env.ESPORTS_WEB_FALLBACK_ENV || path.join(ROOT, '..', 'harvest-engine', '.env');
+  const url = fs.existsSync(file) ? require(path.join(ROOT, 'node_modules', 'dotenv')).parse(fs.readFileSync(file)).SLACK_WEBHOOK_URL : null;
+  if (!url) return console.error('代わりの送り先（harvest-engine の .env）も無いため、知らせられませんでした');
+  await sendToSlack(url, `⚠️ auto_x-app の「自治体のeスポーツ公募の週1回の探索」が、NORTHEPTION の Slack に送れませんでした（${cmd}：${esc(err.message)}）。直すまで公募の結果は届きません。`);
+  console.error('代わりに harvest-engine の Slack へ「送れない」を知らせました');
+}
+
+main().catch(async err => {
+  const cmd = process.argv[2];
+  if (['result', 'fail', 'watchdog', 'check'].includes(cmd)) {
+    await alertFallback(cmd, err).catch(e => console.error('代わりの知らせも失敗:', e.message));
+  }
   console.error(err.message);
   process.exit(1);
 });
